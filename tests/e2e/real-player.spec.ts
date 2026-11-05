@@ -100,3 +100,49 @@ test("the video page shows the real player, without autoplay", async ({ page }) 
   expect(await frame.getAttribute("src")).toContain("autoplay=0");
   await expect(page.getByText("تعذّر تشغيل هذا المقطع هنا.")).toHaveCount(0);
 });
+
+test("moving on with the real player: thumbnail and loader until it runs, then nothing on top", async ({ page }) => {
+  await openCategory(page);
+  await expect(page.locator('iframe[src*="youtube.com/embed/"]')).toHaveCount(1, { timeout: 30_000 });
+  const first = page.getByTestId("feed-card").first();
+  await expect(first.getByTestId("feed-poster")).toHaveAttribute("data-visible", "false", { timeout: 30_000 });
+
+  // Samples the second card from the moment of the swipe, so a brief wrong state can't slip by.
+  await page.evaluate(() => {
+    const samples: { poster: string | null; loader: boolean; paused: boolean; at: number }[] = [];
+    const card = document.querySelectorAll('[data-testid="feed-card"]')[1]!;
+    const startedAt = performance.now();
+    const timer = setInterval(() => {
+      samples.push({
+        poster: card.querySelector('[data-testid="feed-poster"]')?.getAttribute("data-visible") ?? null,
+        loader: Boolean(card.querySelector('[data-testid="video-loader"]')),
+        paused: Boolean(card.querySelector('[data-testid="paused-indicator"]')),
+        at: Math.round(performance.now() - startedAt),
+      });
+    }, 40);
+    Object.assign(window, { __samples: samples, __stopSampling: () => clearInterval(timer) });
+  });
+  await page.keyboard.press("ArrowDown");
+  const next = page.getByTestId("feed-card").nth(1);
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: test.info().outputPath("while-loading.png") });
+  await expect(next.getByTestId("feed-poster")).toHaveAttribute("data-visible", "false", { timeout: 30_000 });
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: test.info().outputPath("just-started.png") });
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: test.info().outputPath("running.png") });
+
+  const samples = await page.evaluate(() => {
+    const target = window as unknown as { __samples: { poster: string | null; loader: boolean; paused: boolean; at: number }[]; __stopSampling: () => void };
+    target.__stopSampling();
+    return target.__samples;
+  });
+  const revealedAt = samples.find((sample) => sample.poster === "false")?.at ?? null;
+  console.log(`[real-player] thumbnail left after ${revealedAt}ms, ${samples.length} samples`);
+
+  expect(revealedAt).not.toBeNull();
+  expect(samples.filter((sample) => sample.paused)).toEqual([]);
+  // The loader never stays on a running video, and is there until it runs.
+  expect(samples.filter((sample) => sample.poster === "false" && sample.loader)).toEqual([]);
+  expect(samples.filter((sample) => sample.poster === "true" && !sample.loader)).toEqual([]);
+});

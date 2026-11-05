@@ -18,6 +18,8 @@ export interface FeedCardProps {
   isActive: boolean;
   /** Cards coming up load their thumbnails ahead of time. No player is created for them. */
   isUpcoming: boolean;
+  /** The card a swipe reveals next, or the first card before anything is active. */
+  isNext: boolean;
   playback: PlaybackState;
   errorCode: number | null;
   isMuted: boolean;

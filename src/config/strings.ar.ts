@@ -1,7 +1,7 @@
 /** All interface text lives here, so a later translation only has to replace this module. */
 export const strings = {
   app: {
-    name: "مسلم",
+    name: "ميم",
     description: "منصة عربية مجانية لاكتشاف المعرفة الإسلامية عبر المقاطع القصيرة والمقالات والمكتبات.",
   },
   navigation: {

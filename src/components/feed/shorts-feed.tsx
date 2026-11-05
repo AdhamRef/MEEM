@@ -135,8 +135,12 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     strategy: FEED_PLAYER_STRATEGY,
     showControls: false,
     loopOnEnd: FEED_IMMERSIVE_OVERLAY,
+    holdUntilFirstFrame: FEED_IMMERSIVE_OVERLAY,
     onWatchFinished: handleWatchFinished,
   });
+
+  // Which way the feed last moved. A card leaving also passes the active share, and mustn't take over.
+  const scrollDirectionRef = useRef(0);
 
   // Decides which card is active, and whether the active one is still more than half visible.
   useEffect(() => {
@@ -147,9 +151,16 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
       (entries) => {
         for (const entry of entries) {
           const index = Number((entry.target as HTMLElement).dataset.index);
+          const active = activeIndexRef.current;
           if (entry.intersectionRatio >= FEED_ACTIVE_THRESHOLD) {
-            setActiveIndex(index);
-            setIsActiveInView(true);
+            const isArriving = active === null || !FEED_IMMERSIVE_OVERLAY || (index - active) * scrollDirectionRef.current > 0;
+            if (index === active) {
+              setIsActiveInView(true);
+            } else if (isArriving) {
+              activeIndexRef.current = index;
+              setActiveIndex(index);
+              setIsActiveInView(true);
+            }
           } else if (index === activeIndexRef.current && entry.intersectionRatio <= FEED_PAUSE_THRESHOLD) {
             setIsActiveInView(false);
           }
@@ -170,6 +181,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     const scroller = scrollerRef.current;
     if (!scroller || !FEED_IMMERSIVE_OVERLAY) return;
     let timer: ReturnType<typeof setTimeout>;
+    let lastTop = scroller.scrollTop;
     const settle = () => {
       const box = scroller.getBoundingClientRect();
       for (const [index, card] of cardRefs.current) {
@@ -182,6 +194,8 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
       }
     };
     const onScroll = () => {
+      scrollDirectionRef.current = Math.sign(scroller.scrollTop - lastTop);
+      lastTop = scroller.scrollTop;
       clearTimeout(timer);
       timer = setTimeout(settle, 120);
     };
@@ -387,6 +401,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
             video={video}
             isActive={index === activeIndex}
             isUpcoming={activeIndex !== null && index > activeIndex && index <= activeIndex + FEED_PRELOAD_THUMBNAILS}
+            isNext={index === (activeIndex === null ? 0 : activeIndex + 1)}
             playback={playback}
             errorCode={errorCode}
             isMuted={isMuted}

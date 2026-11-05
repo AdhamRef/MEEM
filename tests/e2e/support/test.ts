@@ -29,7 +29,13 @@ const FAKE_IFRAME_API = `
       record(name, args[0]);
       return fn(...args);
     };
-    const fire = (state) => options.events.onStateChange({ target: self, data: state });
+    // Time moves while playing, as it does in the real player, unless a test holds the first frame back.
+    let clock;
+    const fire = (state) => {
+      clearInterval(clock);
+      if (state === 1) clock = setInterval(() => { if (!window.__ytHoldFirstFrame) time += 0.1; }, 100);
+      options.events.onStateChange({ target: self, data: state });
+    };
     self.playVideo = guarded("playVideo", () => fire(1));
     self.pauseVideo = guarded("pauseVideo", () => fire(2));
     self.mute = guarded("mute", () => { muted = true; });
@@ -44,7 +50,7 @@ const FAKE_IFRAME_API = `
     self.__setDuration = (value) => { duration = value; };
     self.__setVideoId = (id) => { frame.dataset.videoId = id; };
     self.loadVideoById = guarded("loadVideoById", (video) => { const id = typeof video === "string" ? video : video.videoId; frame.dataset.videoId = id; time = (video && video.startSeconds) || 0; fire(1); });
-    self.destroy = () => { record("destroy"); frame.remove(); window.__ytPlayers = window.__ytPlayers.filter((p) => p !== self); };
+    self.destroy = () => { clearInterval(clock); record("destroy"); frame.remove(); window.__ytPlayers = window.__ytPlayers.filter((p) => p !== self); };
     self.__fireState = fire;
     self.__fireError = (code) => options.events.onError({ target: self, data: code });
     self.__fireAutoplayBlocked = () => options.events.onAutoplayBlocked({ target: self });

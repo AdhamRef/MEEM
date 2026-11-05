@@ -84,9 +84,7 @@ test.describe("playback rules", () => {
     await tap.click();
     await expect.poll(async () => (await calls(page)).at(-1)?.name).toBe("playVideo");
     await expect(card.getByTestId("paused-indicator")).toHaveCount(0);
-    // YouTube shows its icon when playback resumes, so our logo covers that spot.
-    await expect(card.getByTestId("centre-logo")).toHaveAttribute("data-visible", "true");
-    await expect(card.getByTestId("centre-logo")).toHaveAttribute("data-visible", "false", { timeout: 5000 });
+    await expect(card.getByTestId("video-loader")).toHaveCount(0);
   });
 
   test("a thumbnail covers the player until its first frame, then gets out of the way", async ({ page }) => {
@@ -94,10 +92,49 @@ test.describe("playback rules", () => {
     const poster = page.locator('[data-testid="feed-poster"]').first();
     await expect.poll(async () => (await calls(page)).some((call) => call.name === "playVideo")).toBeTruthy();
     await expect(poster).toHaveAttribute("data-visible", "false");
-    // Our logo covers the middle for a moment, where YouTube shows its icon, and then leaves.
-    const logo = page.locator('[data-testid="centre-logo"][data-visible="true"]').first();
-    await expect(logo).toBeAttached();
-    await expect(logo).not.toBeAttached({ timeout: 5000 });
+    await expect(page.getByTestId("feed-card").first().getByTestId("video-loader")).toHaveCount(0);
+  });
+
+  test("moving on shows the thumbnail and our loader until the time moves, then nothing on top", async ({ page }) => {
+    await openFeed(page);
+    const cards = page.getByTestId("feed-card");
+    await expect(cards.first().getByTestId("video-loader")).toHaveCount(0);
+    // Waiting ahead, before the swipe that reveals it.
+    await expect(cards.nth(1).getByTestId("video-loader")).toBeAttached();
+
+    await page.evaluate(() => {
+      (window as unknown as { __ytHoldFirstFrame: boolean }).__ytHoldFirstFrame = true;
+    });
+    await moveNext(page);
+    const next = cards.nth(1);
+    await expect(next.getByTestId("video-tap")).toBeEnabled();
+
+    // YouTube says "playing" and even "paused" during the swap. Neither reveals a black player.
+    await fire(page, "__fireState", 2);
+    await expect(next.getByTestId("paused-indicator")).toHaveCount(0);
+    await fire(page, "__fireState", 1);
+    await expect(next.getByTestId("feed-poster")).toHaveAttribute("data-visible", "true");
+    await expect(next.getByTestId("video-loader")).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as unknown as { __ytHoldFirstFrame: boolean }).__ytHoldFirstFrame = false;
+    });
+    await expect(next.getByTestId("feed-poster")).toHaveAttribute("data-visible", "false");
+    await expect(next.getByTestId("video-loader")).toHaveCount(0);
+  });
+
+  test("a video that never starts ends in a play button, not an endless loader", async ({ page }) => {
+    await openFeed(page);
+    await page.evaluate(() => {
+      (window as unknown as { __ytHoldFirstFrame: boolean }).__ytHoldFirstFrame = true;
+    });
+    await moveNext(page);
+    const next = page.getByTestId("feed-card").nth(1);
+    await expect(next.getByTestId("video-tap")).toBeEnabled();
+    // Paused during the swap, so the time can't move and only the give-up timer is left.
+    await fire(page, "__fireState", 2);
+    await expect(next.getByTestId("paused-indicator")).toBeVisible({ timeout: 12_000 });
+    await expect(next.getByTestId("video-loader")).toHaveCount(0);
   });
 
   test("autoplay starts muted, with YouTube's documented controls setting off, and nothing in front", async ({ page }) => {
@@ -707,7 +744,7 @@ test("opens with the animated logo and the name, not skeletons", async ({ page }
   await page.goto("/");
   const loader = page.getByTestId("feed-loading");
   await expect(loader).toBeVisible();
-  await expect(page.getByTestId("feed-loader-name")).toHaveText("مسلم");
-  await expect(loader.locator("svg")).toBeVisible();
+  await expect(page.getByTestId("feed-loader-name")).toHaveText("ميم");
+  await expect(loader.locator("img")).toBeVisible();
   await expect(loader).toBeHidden({ timeout: 15_000 });
 });

@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-11-04
+Last updated: 2026-11-05
 
 **Phases 2, 3, 5, 6, and 7 are implemented, and Phase 4 is implemented with its real-device check still open.** Phase 1 remains open, because it needs real phones and a real Short for the vertical-video check, and Phase 4's player choice and layout depend on those same results. The owner asked to proceed in this state. Nothing has been committed. Phase 8 has not started.
 
@@ -323,7 +323,7 @@ Phase 2:
 - Empty, error, not-found, and loading states, with a real retry
 - Article typography, and Quranic and mixed-direction text handling
 - Central Arabic strings, now also used by server error messages
-- A temporary brand mark and favicon
+- The brand mark and favicon
 - `docs/DESIGN_SYSTEM.md`
 
 Phase 1, finished within the open phase:
@@ -383,10 +383,14 @@ Run on 2026-11-04 on Node 24.19, against MongoDB 8.2.6. This machine can't run t
 
 - **Spike code** must be deleted once its results are recorded: `src/app/spike/`, `tests/e2e/spike-feed.spec.ts`, and `scripts/youtube/spike-embed-dimensions.ts`. The page is unavailable in production builds.
 
+### Known issue: YouTube's icon on the feed
+
+The feed keeps its thumbnail and loader up until the video's time moves, then shows nothing of ours on top. YouTube then draws its own pause icon in the middle of the player. Measured on the real player in emulated Chromium on 2026-11-05, it stays for about 3.5 to 5 seconds after the video starts. Adding `fs=0`, `disablekb=1`, and `rel=0` made no visible difference, though that run didn't confirm they reached the player. It still needs checking on real phones, and the owner needs to decide whether to accept it.
+
 ### Placeholders needing a decision
 
-- **Product name:** the specification gives none, so "منصة المعرفة الإسلامية" is a working title in `src/config/strings.ar.ts`.
-- **Logo:** the brand mark and favicon are temporary.
+- **Product name:** ميم, in `src/config/strings.ar.ts`.
+- **Logo:** `public/logo.png`, used by `BrandMark`. `src/app/icon.png` and `src/app/apple-icon.png` are made from it, so regenerate them if it changes.
 
 ### Quranic text
 

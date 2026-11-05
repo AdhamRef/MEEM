@@ -18,6 +18,11 @@ interface ActivePlayerOptions {
   showControls?: boolean;
   /** Starts a video again when it ends, as a vertical video app does. */
   loopOnEnd?: boolean;
+  /**
+   * Reports "playing" only once the video's time has moved, and stays "loading" until then. YouTube
+   * says "playing" before there's a picture, and may say "paused" while it swaps videos.
+   */
+  holdUntilFirstFrame?: boolean;
   strategy: "reuse" | "recreate";
   onWatchFinished?: (videoId: string, watch: Omit<WatchSummary, "durationSeconds">) => void;
 }
@@ -26,13 +31,20 @@ interface WatchTracker {
   videoId: string;
   didStartPlaying: boolean;
   didEnd: boolean;
+  hasFirstFrame: boolean;
 }
+
+/** Long enough for a slow connection. After this, the person gets a play button, not an endless loader. */
+const LOADING_GIVE_UP_MS = 8000;
+const FIRST_FRAME_CHECK_MS = 50;
+/** If the time never seems to move, showing the player beats hiding a video that may be running. */
+const FIRST_FRAME_GIVE_UP_MS = 2500;
 
 /**
  * Manages the one YouTube player a page may have. Autoplay always starts muted. Sound comes
  * only from a person's action, and the player's own controls and end screen stay untouched.
  */
-export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strategy, onWatchFinished, showControls = true, loopOnEnd = false }: ActivePlayerOptions) {
+export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strategy, onWatchFinished, showControls = true, loopOnEnd = false, holdUntilFirstFrame = false }: ActivePlayerOptions) {
   // Tagged with its video, so moving on shows "loading" rather than the last video's state.
   const [playback, setPlayback] = useState<{ videoId: string | null; state: PlaybackState; errorCode: number | null }>({ videoId: null, state: "idle", errorCode: null });
   const playbackStateRef = useRef<PlaybackState>("idle");
@@ -51,6 +63,8 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
   const isMutedRef = useRef(true);
   const isInViewRef = useRef(isInView);
   const onWatchFinishedRef = useRef(onWatchFinished);
+  const stopFirstFrameCheckRef = useRef<(() => void) | null>(null);
+  const loadingGiveUpRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     onWatchFinishedRef.current = onWatchFinished;
@@ -58,7 +72,59 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
     isMutedRef.current = isMuted;
   });
 
+  const stopWaiting = useCallback(() => {
+    stopFirstFrameCheckRef.current?.();
+    if (loadingGiveUpRef.current) clearTimeout(loadingGiveUpRef.current);
+    loadingGiveUpRef.current = null;
+  }, []);
+
+  const startTracking = useCallback(
+    (id: string) => {
+      const tracker: WatchTracker = { videoId: id, didStartPlaying: false, didEnd: false, hasFirstFrame: false };
+      trackerRef.current = tracker;
+      // Going back to a video before the next one reported anything would otherwise show its old state.
+      setPlayback({ videoId: id, state: "loading", errorCode: null });
+      if (!holdUntilFirstFrame) return;
+      loadingGiveUpRef.current = setTimeout(() => {
+        if (trackerRef.current === tracker && !tracker.hasFirstFrame) setPlayback({ videoId: id, state: "blocked", errorCode: null });
+      }, LOADING_GIVE_UP_MS);
+    },
+    [holdUntilFirstFrame],
+  );
+
+  const waitForFirstFrame = useCallback(
+    (player: YouTubePlayer, tracker: WatchTracker) => {
+      stopFirstFrameCheckRef.current?.();
+      const startedAt = Date.now();
+      let firstTime: number | null = null;
+      const check = () => {
+        let hasMoved = false;
+        try {
+          // A reused player can still be reporting the previous video.
+          if (player.getVideoUrl().includes(tracker.videoId)) {
+            const time = player.getCurrentTime();
+            firstTime ??= time;
+            hasMoved = time !== firstTime;
+          }
+        } catch {
+          // Being torn down. Time running out below settles it.
+        }
+        if (!hasMoved && Date.now() - startedAt < FIRST_FRAME_GIVE_UP_MS) return;
+        stopWaiting();
+        tracker.hasFirstFrame = true;
+        if (trackerRef.current === tracker) setPlayback({ videoId: tracker.videoId, state: "playing", errorCode: null });
+      };
+      const timer = setInterval(check, FIRST_FRAME_CHECK_MS);
+      stopFirstFrameCheckRef.current = () => {
+        clearInterval(timer);
+        stopFirstFrameCheckRef.current = null;
+      };
+    },
+    [stopWaiting],
+  );
+
   const finishWatch = useCallback(() => {
+    stopWaiting();
     const tracker = trackerRef.current;
     trackerRef.current = null;
     if (!tracker) return;
@@ -72,7 +138,7 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
       }
     }
     onWatchFinishedRef.current?.(tracker.videoId, { didStartPlaying: tracker.didStartPlaying, didEnd: tracker.didEnd, watchedSeconds });
-  }, []);
+  }, [stopWaiting]);
 
   const destroyPlayer = useCallback(() => {
     finishWatch();
@@ -97,7 +163,7 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
 
     if (playerRef.current && strategy === "reuse") {
       finishWatch();
-      trackerRef.current = { videoId, didStartPlaying: false, didEnd: false };
+      startTracking(videoId);
       if (isReadyRef.current) {
         playerRef.current.loadVideoById(videoId);
         if (wantsSoundRef.current) playerRef.current.unMute();
@@ -108,7 +174,7 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
     }
 
     destroyPlayer();
-    trackerRef.current = { videoId, didStartPlaying: false, didEnd: false };
+    startTracking(videoId);
 
     loadYouTubeIframeApi().then(
       (youtube) => {
@@ -147,11 +213,17 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
               const tracker = trackerRef.current;
               if (!tracker) return;
               const report = (state: PlaybackState) => setPlayback({ videoId: tracker.videoId, state, errorCode: null });
+              const isHeld = holdUntilFirstFrame && !tracker.hasFirstFrame;
               if (data === PLAYER_STATE.PLAYING) {
                 tracker.didStartPlaying = true;
-                report("playing");
-              } else if (data === PLAYER_STATE.PAUSED) {
-                report("paused");
+                if (isHeld) waitForFirstFrame(target, tracker);
+                else report("playing");
+                return;
+              }
+              // Buffering or paused again, so the time can't be expected to move yet.
+              stopFirstFrameCheckRef.current?.();
+              if (data === PLAYER_STATE.PAUSED) {
+                if (!isHeld) report("paused");
               } else if (data === PLAYER_STATE.ENDED) {
                 tracker.didEnd = true;
                 if (loopOnEnd) {
@@ -162,8 +234,14 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
                 }
               }
             },
-            onError: ({ data }) => setPlayback({ videoId: trackerRef.current?.videoId ?? null, state: "error", errorCode: data ?? null }),
-            onAutoplayBlocked: () => setPlayback({ videoId: trackerRef.current?.videoId ?? null, state: "blocked", errorCode: null }),
+            onError: ({ data }) => {
+              stopWaiting();
+              setPlayback({ videoId: trackerRef.current?.videoId ?? null, state: "error", errorCode: data ?? null });
+            },
+            onAutoplayBlocked: () => {
+              stopWaiting();
+              setPlayback({ videoId: trackerRef.current?.videoId ?? null, state: "blocked", errorCode: null });
+            },
           },
         });
       },
@@ -175,7 +253,7 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
     return () => {
       isCancelled = true;
     };
-  }, [videoId, autoplay, strategy, showControls, loopOnEnd, destroyPlayer, finishWatch, mountRef]);
+  }, [videoId, autoplay, strategy, showControls, loopOnEnd, holdUntilFirstFrame, destroyPlayer, finishWatch, startTracking, stopWaiting, waitForFirstFrame, mountRef]);
 
   // Pauses once less than half the player is visible, and resumes only a pause made here.
   useEffect(() => {

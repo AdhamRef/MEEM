@@ -43,8 +43,8 @@ Your credentials are in `.env`, but only you can complete a real sign-in, becaus
 
 - [ ] **Commits.** Nothing is committed yet, so a disk failure would lose all of it. May I commit Phases 1 to 8? I recommend yes. The temporary spike code would be included, then removed later.
 - [ ] **My proposed decisions.** Review the "Proposed, awaiting approval" table in [PROJECT_STATUS.md](PROJECT_STATUS.md). Tell me only what you disagree with. The ones most worth reading are listed below.
-- [x] **Product name:** مسلم (Muslim), decided 2026-11-05.
-- [ ] **Logo and favicon.** The current ones are temporary. Send files when you have them, ideally SVG.
+- [x] **Product name:** ميم, decided 2026-11-05.
+- [x] **Logo and favicon:** `public/logo.png`, supplied 2026-11-05. An SVG would stay sharper at large sizes, if one exists.
 - [ ] **Starting categories.** Check that the 12 categories suit you, on `/interests`.
 
 | Decision to check | What I did | Why it matters |

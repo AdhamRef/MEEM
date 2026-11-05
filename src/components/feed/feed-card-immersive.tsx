@@ -4,7 +4,7 @@
 
 import { ArrowUpLeft, ChevronDown, ChevronUp, ExternalLink, MessageCircle, MonitorPlay, Play, Tv, Volume2, VolumeX } from "lucide-react";
 import Link from "next/link";
-import { forwardRef, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { forwardRef, type CSSProperties, type ReactNode } from "react";
 import { BrandMark } from "@/components/shared/brand-mark";
 import { SaveButton, ShareButton } from "@/components/video/video-actions";
 import { Button } from "@/components/ui/button";
@@ -12,27 +12,6 @@ import { strings } from "@/config/strings.ar";
 import { cn } from "@/lib/utils";
 import { youtubeWatchUrl } from "@/lib/youtube/ids";
 import { feedVideoRatio, statusMessage, type FeedCardProps } from "./feed-card";
-
-/** How long YouTube shows its own pause icon in the middle of the player when playback starts or resumes. */
-const YOUTUBE_ICON_MS = 1600;
-
-/**
- * Our logo sits exactly over YouTube's icon. It shows from the moment a video starts loading
- * until that icon has gone, so the two read as one short moment of ours.
- */
-function useCentreLogo(isActive: boolean, playback: FeedCardProps["playback"]): boolean {
-  const [isCovering, setIsCovering] = useState(false);
-  const previous = useRef(playback);
-  useEffect(() => {
-    const before = previous.current;
-    previous.current = playback;
-    if (!isActive || playback !== "playing" || before === "playing") return;
-    setIsCovering(true);
-    const timer = setTimeout(() => setIsCovering(false), YOUTUBE_ICON_MS);
-    return () => clearTimeout(timer);
-  }, [isActive, playback]);
-  return isActive && (playback === "loading" || (playback === "playing" && isCovering));
-}
 
 function RailAction({ label, children }: { label?: string; children: ReactNode }) {
   return (
@@ -53,7 +32,7 @@ function RailAction({ label, children }: { label?: string; children: ReactNode }
  * own interface stays out of sight and swiping works. See FEED_IMMERSIVE_OVERLAY.
  */
 export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function ImmersiveFeedCard(
-  { video, isActive, isUpcoming, playback, errorCode, isMuted, isSaved, notice, hasPrevious, hasNext, onToggleSound, onTapVideo, onPrevious, onNext, onSavedChange, onNotice, slotRef },
+  { video, isActive, isUpcoming, isNext, playback, errorCode, isMuted, isSaved, notice, hasPrevious, hasNext, onToggleSound, onTapVideo, onPrevious, onNext, onSavedChange, onNotice, slotRef },
   ref,
 ) {
   const message = isActive ? (statusMessage(playback, errorCode) ?? notice) : null;
@@ -61,9 +40,10 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
   const ctaLabel = video.cta?.label ?? strings.feed.ctaDefaults[video.cta?.type ?? "EXTERNAL_RESOURCE"];
   const ratio = feedVideoRatio(video);
   const isWide = ratio > 1;
-  const showCentreLogo = useCentreLogo(isActive, playback);
   // The thumbnail stays until the first frame, so nobody sees a loading player.
   const showPoster = !isActive || (playback !== "playing" && playback !== "paused");
+  // Already on the next card as a swipe reveals it, and gone the moment the video runs.
+  const showLoader = isActive ? playback === "loading" || playback === "idle" : isNext;
 
   return (
     <article
@@ -88,14 +68,19 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
             <img
               src={video.thumbnailUrl}
               alt=""
-              loading={isActive || isUpcoming ? "eager" : "lazy"}
+              loading={isActive || isUpcoming || isNext ? "eager" : "lazy"}
+              fetchPriority={isActive || isNext ? "high" : "auto"}
+              decoding="async"
               referrerPolicy="strict-origin-when-cross-origin"
               data-testid="feed-poster"
               data-visible={showPoster}
               // Above the player, at the video's own size. YouTube's thumbnails have bars around a
-              // vertical video, which cropping to its shape removes.
-              className={cn("absolute inset-0 z-20 m-auto aspect-(--r) w-[min(100%,calc(100cqh*var(--r)))] object-cover transition-opacity duration-150", showPoster ? "opacity-100" : "pointer-events-none opacity-0")}
+              // vertical video, which cropping to its shape removes. It fades only on the way out:
+              // fading in would show black on the card being swiped away, once the player has left it.
+              className={cn("absolute inset-0 z-20 m-auto aspect-(--r) w-[min(100%,calc(100cqh*var(--r)))] object-cover", showPoster ? "opacity-100" : "pointer-events-none opacity-0 transition-opacity duration-150")}
             />
+          ) : showPoster ? (
+            <div aria-hidden className="absolute inset-0 z-20 bg-black" />
           ) : null}
         </div>
 
@@ -108,17 +93,14 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
           data-testid="video-tap"
           className="absolute inset-0 z-20 flex items-center justify-center outline-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset"
         >
-          <span
-            aria-hidden
-            className={cn("absolute flex size-20 items-center justify-center rounded-full bg-black/75 backdrop-blur-xl transition-opacity duration-300", showCentreLogo ? "opacity-100" : "opacity-0")}
-            data-testid="centre-logo"
-            data-visible={showCentreLogo}
-          >
-            <span className="feed-loader-ring absolute inset-0 rounded-full" />
-            <BrandMark className="size-11" />
-          </span>
+          {showLoader ? (
+            <span aria-hidden className="absolute flex size-20 items-center justify-center rounded-full bg-black/60" data-testid="video-loader">
+              <span className="feed-loader-ring absolute inset-0 rounded-full" />
+              <BrandMark className="feed-loader-logo size-12" />
+            </span>
+          ) : null}
           {isActive && (playback === "paused" || playback === "blocked") ? (
-            <span className="flex size-20 items-center justify-center rounded-full bg-black/45 backdrop-blur-sm" data-testid="paused-indicator">
+            <span className="feed-pop flex size-20 items-center justify-center rounded-full bg-black/45" data-testid="paused-indicator">
               <Play aria-hidden className="ms-1 size-10 fill-white" />
             </span>
           ) : null}

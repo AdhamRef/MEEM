@@ -278,12 +278,12 @@
 /* The immersive feed: the frame is larger than its window, which crops YouTube's bars out of view. */
 [data-immersive-player] iframe {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  /* Half of each side's overflow, which centres it in either writing direction. */
+  inset-inline-start: calc(50% - var(--frame-w) / 2);
+  top: calc(50% - var(--frame-h) / 2);
   width: var(--frame-w) !important;
   height: var(--frame-h) !important;
   max-width: none;
-  transform: translate(-50%, -50%);
 }
 
 /* The feed's opening animation. */
@@ -308,6 +308,15 @@
   background-clip: text;
   -webkit-background-clip: text;
   animation: feed-loader-rise 0.7s ease-out both, feed-loader-shine 2.4s linear 0.7s infinite;
+}
+.feed-pop {
+  animation: feed-pop 0.16s ease-out both;
+}
+@keyframes feed-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
 }
 @keyframes feed-loader-spin {
   to {
@@ -340,6 +349,7 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .feed-pop,
   .feed-loader-ring,
   .feed-loader-glow,
   .feed-loader-logo,

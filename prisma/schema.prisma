@@ -1,0 +1,999 @@
+// Database design rationale lives in docs/DATABASE_DESIGN.md.
+//
+// MongoDB notes that shape this file:
+// - Prisma is pinned to 6.x: Prisma ORM 7 does not support MongoDB.
+// - Prisma Migrate is unavailable. Always apply schema changes with `npm run db:sync`.
+//   Never run `prisma db push` alone: it deletes every index this file doesn't declare,
+//   including the text and TTL indexes in prisma/mongo-indexes.ts, which db:sync restores.
+// - A unique index treats null and missing as one value, so an optional field must
+//   never be @unique. See Playlist.sourceKey for the pattern.
+// - Filters on missing optional fields are unreliable, so "active" flags that appear
+//   in indexed queries are required booleans (isArchived), not nullable dates.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Shared enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  USER
+  CONTRIBUTOR
+  SCIENTIFIC_REVIEWER
+  EDITOR
+  ADMIN
+  SUPER_ADMIN
+}
+
+/// Publishing is intentionally two-state (§12.3). Archival is a separate flag.
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum ContentType {
+  VIDEO
+  ARTICLE
+  TOPIC
+  LIBRARY
+  PLAYLIST
+  RESOURCE
+}
+
+enum VideoKind {
+  SHORT
+  LONG_FORM
+}
+
+/// A signal for human review. The YouTube API has no reliable "is a Short" field.
+enum VideoClassification {
+  SHORT_CANDIDATE
+  LONG_FORM_CANDIDATE
+}
+
+enum VideoAvailability {
+  UNKNOWN
+  AVAILABLE
+  UNAVAILABLE
+  NOT_EMBEDDABLE
+}
+
+enum CtaType {
+  INTERNAL_ARTICLE
+  EXTERNAL_RESOURCE
+  FULL_VIDEO
+  CURATED_PLAYLIST
+  YOUTUBE_PLAYLIST
+  TOPIC
+}
+
+enum PlaylistType {
+  YOUTUBE
+  CURATED
+}
+
+enum SyncStatus {
+  NOT_APPLICABLE
+  PENDING
+  SYNCED
+  FAILED
+}
+
+enum TopicRelationType {
+  RELATED
+  COMPLEMENTARY
+}
+
+enum ContentRelationType {
+  RELATED_ARTICLE
+  COMPLEMENTARY_TOPIC
+  FURTHER_READING
+  RESPONSE_TO_OBJECTION
+  PREREQUISITE
+  RELATED_RESOURCE
+}
+
+enum ActivityAction {
+  VIEW
+  COMPLETE
+  EARLY_SKIP
+}
+
+enum ImportJobType {
+  IMPORT
+  SYNC
+}
+
+enum ImportJobStatus {
+  DISCOVERING
+  READY_FOR_REVIEW
+  IMPORTING
+  PAUSED
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum ImportCandidateResult {
+  PENDING
+  IMPORTED
+  DUPLICATE
+  SKIPPED
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Composite types
+// ---------------------------------------------------------------------------
+
+type Thumbnail {
+  quality String
+  url     String
+  width   Int?
+  height  Int?
+}
+
+/// Only populated when statistics are enabled and returned by the API.
+/// Must never be kept for more than 30 days (YouTube Developer Policies III.E.4).
+type VideoStats {
+  viewCount    BigInt?
+  likeCount    BigInt?
+  commentCount BigInt?
+  fetchedAt    DateTime
+}
+
+type VideoCta {
+  type        CtaType
+  label       String?
+  targetId    String? @db.ObjectId
+  externalUrl String?
+}
+
+type ArticleHeading {
+  anchor String
+  level  Int
+  text   String
+}
+
+type ArticleSource {
+  title  String
+  author String?
+  url    String?
+  note   String?
+}
+
+type SeoMetadata {
+  title       String?
+  description String?
+  imageUrl    String?
+}
+
+type ImportError {
+  stage      String
+  message    String
+  occurredAt DateTime
+}
+
+type ImportAssignment {
+  kind        VideoKind?
+  categoryId  String?    @db.ObjectId
+  topicIds    String[]   @db.ObjectId
+  libraryIds  String[]   @db.ObjectId
+  playlistIds String[]   @db.ObjectId
+}
+
+// ---------------------------------------------------------------------------
+// Identity and users
+// ---------------------------------------------------------------------------
+
+model User {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  name             String?
+  email            String    @unique
+  emailVerified    DateTime?
+  image            String?
+  role             UserRole  @default(USER)
+  /// Extra permissions granted individually, for example a contributor who may publish.
+  permissionGrants String[]
+  isDeactivated    Boolean   @default(false)
+  deactivatedAt    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  accounts        Account[]
+  sessions        Session[]
+  preference      UserPreference?
+  interests       UserInterest[]
+  favorites       Favorite[]
+  activities      UserActivity[]
+  viewingProgress ViewingProgress[]
+
+  authoredArticles Article[]    @relation("ArticleAuthor")
+  importJobs       ImportJob[]
+  reviewNotes      ReviewNote[]
+
+  @@index([role])
+}
+
+model Account {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String  @db.ObjectId
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model UserPreference {
+  id                 String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId             String    @unique @db.ObjectId
+  onboardingDoneAt   DateTime?
+  onboardingSkipped  Boolean   @default(false)
+  prefersSoundOn     Boolean   @default(false)
+  privacyNoticeSeen  Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserInterest {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String    @db.ObjectId
+  categoryId     String    @db.ObjectId
+  isSelected     Boolean   @default(false)
+  explicitWeight Float     @default(0)
+  behaviourScore Float     @default(0)
+  lastSignalAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryId])
+  @@index([categoryId])
+}
+
+/// Polymorphic: entity existence is checked by the favourites service.
+model Favorite {
+  id         String      @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String      @db.ObjectId
+  entityType ContentType
+  entityId   String      @db.ObjectId
+  createdAt  DateTime    @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, entityType, entityId])
+  @@index([userId, createdAt])
+  @@index([userId, entityType, createdAt])
+}
+
+/// expiresAt is set from the retention setting and removed by a TTL index.
+model UserActivity {
+  id         String         @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String         @db.ObjectId
+  entityType ContentType
+  entityId   String         @db.ObjectId
+  action     ActivityAction
+  categoryId String?        @db.ObjectId
+  occurredAt DateTime       @default(now())
+  expiresAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, occurredAt])
+  @@index([userId, action, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+  @@index([action, occurredAt])
+}
+
+/// scopeKey is "video" or "playlist:<id>", because unique indexes cannot use a nullable
+/// playlistId to mean "watched outside any playlist".
+model ViewingProgress {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId          String   @db.ObjectId
+  videoId         String   @db.ObjectId
+  playlistId      String?  @db.ObjectId
+  scopeKey        String
+  positionSeconds Int      @default(0)
+  durationSeconds Int?
+  isCompleted     Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId, scopeKey])
+  @@index([userId, updatedAt])
+  @@index([userId, playlistId])
+  @@index([videoId])
+}
+
+// ---------------------------------------------------------------------------
+// Taxonomy and knowledge
+// ---------------------------------------------------------------------------
+
+model Category {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  title        String
+  slug         String   @unique
+  description  String?
+  icon         String?
+  coverImage   String?
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+  parentId     String?  @db.ObjectId
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children Category[] @relation("CategoryTree")
+
+  interests UserInterest[]
+  topics    Topic[]
+  videos    Video[]
+  articles  Article[]
+
+  @@index([parentId])
+  @@index([isActive, displayOrder])
+}
+
+model Topic {
+  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  title        String
+  slug         String        @unique
+  introduction String?
+  description  String?
+  coverImage   String?
+  categoryId   String?       @db.ObjectId
+  parentId     String?       @db.ObjectId
+  isFeatured   Boolean       @default(false)
+  displayOrder Int           @default(0)
+  status       ContentStatus @default(DRAFT)
+  isArchived   Boolean       @default(false)
+  archivedAt   DateTime?
+  publishedAt  DateTime?
+  searchText   String        @default("")
+  titleSearch  String        @default("")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  parent   Topic?    @relation("TopicTree", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children Topic[]   @relation("TopicTree")
+
+  relationsFrom TopicRelation[] @relation("TopicRelationFrom")
+  relationsTo   TopicRelation[] @relation("TopicRelationTo")
+  articles      ArticleTopic[]
+  videos        VideoTopic[]
+  playlists     PlaylistTopic[]
+  resources     ResourceTopic[]
+  libraries     LibraryTopic[]
+
+  @@index([status, isArchived, updatedAt])
+  @@index([status, isArchived, isFeatured, displayOrder])
+  @@index([categoryId])
+  @@index([parentId])
+  @@index([titleSearch])
+}
+
+/// Symmetric pairs are stored in canonical order by the topic service.
+model TopicRelation {
+  id          String            @id @default(auto()) @map("_id") @db.ObjectId
+  fromTopicId String            @db.ObjectId
+  toTopicId   String            @db.ObjectId
+  type        TopicRelationType
+  createdAt   DateTime          @default(now())
+
+  fromTopic Topic @relation("TopicRelationFrom", fields: [fromTopicId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  toTopic   Topic @relation("TopicRelationTo", fields: [toTopicId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([fromTopicId, toTopicId, type])
+  @@index([toTopicId])
+}
+
+model Library {
+  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  name         String
+  slug         String        @unique
+  description  String?
+  introduction String?
+  coverImage   String?
+  isFeatured   Boolean       @default(false)
+  displayOrder Int           @default(0)
+  parentId     String?       @db.ObjectId
+  status       ContentStatus @default(DRAFT)
+  isArchived   Boolean       @default(false)
+  archivedAt   DateTime?
+  publishedAt  DateTime?
+  searchText   String        @default("")
+  titleSearch  String        @default("")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  parent   Library?  @relation("LibraryTree", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children Library[] @relation("LibraryTree")
+
+  relationsFrom LibraryRelation[] @relation("LibraryRelationFrom")
+  relationsTo   LibraryRelation[] @relation("LibraryRelationTo")
+  articles      ArticleLibrary[]
+  videos        VideoLibrary[]
+  playlists     PlaylistLibrary[]
+  resources     ResourceLibrary[]
+  topics        LibraryTopic[]
+
+  @@index([status, isArchived, isFeatured, displayOrder])
+  @@index([parentId])
+  @@index([titleSearch])
+}
+
+model LibraryRelation {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  fromLibraryId String   @db.ObjectId
+  toLibraryId   String   @db.ObjectId
+  createdAt     DateTime @default(now())
+
+  fromLibrary Library @relation("LibraryRelationFrom", fields: [fromLibraryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  toLibrary   Library @relation("LibraryRelationTo", fields: [toLibraryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([fromLibraryId, toLibraryId])
+  @@index([toLibraryId])
+}
+
+/// Optional editorial links between any two content items (§13.2). Polymorphic, so
+/// both ends are validated by the relations service.
+model ContentRelation {
+  id           String              @id @default(auto()) @map("_id") @db.ObjectId
+  sourceType   ContentType
+  sourceId     String              @db.ObjectId
+  targetType   ContentType
+  targetId     String              @db.ObjectId
+  relationType ContentRelationType
+  note         String?
+  createdById  String?             @db.ObjectId
+  createdAt    DateTime            @default(now())
+
+  @@unique([sourceType, sourceId, targetType, targetId, relationType])
+  @@index([targetType, targetId])
+}
+
+/// Editorial groupings for Explore (§11.3, §16).
+model Collection {
+  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  title        String
+  slug         String        @unique
+  description  String?
+  coverImage   String?
+  displayOrder Int           @default(0)
+  status       ContentStatus @default(DRAFT)
+  isArchived   Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  items CollectionItem[]
+
+  @@index([status, isArchived, displayOrder])
+}
+
+model CollectionItem {
+  id           String      @id @default(auto()) @map("_id") @db.ObjectId
+  collectionId String      @db.ObjectId
+  entityType   ContentType
+  entityId     String      @db.ObjectId
+  position     Int
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, entityType, entityId])
+  @@index([collectionId, position])
+}
+
+// ---------------------------------------------------------------------------
+// Content
+// ---------------------------------------------------------------------------
+
+model YouTubeChannel {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  youtubeChannelId  String    @unique
+  /// Not unique: YouTube handles can change owners.
+  handle            String?
+  title             String
+  description       String?
+  thumbnailUrl      String?
+  uploadsPlaylistId String?
+  isActive          Boolean   @default(true)
+  lastSyncedAt      DateTime?
+  metadataFetchedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  videos     Video[]
+  importJobs ImportJob[]
+
+  @@index([isActive])
+  @@index([handle])
+  @@index([metadataFetchedAt])
+}
+
+/// Holds both Shorts and long-form videos. See plan decision D3 and §12.6.
+model Video {
+  id             String              @id @default(auto()) @map("_id") @db.ObjectId
+  youtubeVideoId String              @unique
+  kind           VideoKind
+  classification VideoClassification
+  reviewedAt     DateTime?
+  status         ContentStatus       @default(DRAFT)
+  isArchived     Boolean             @default(false)
+  archivedAt     DateTime?
+  publishedAt    DateTime?
+
+  channelId  String? @db.ObjectId
+  categoryId String? @db.ObjectId
+
+  // YouTube-sourced data, refreshed at least every 30 days. Never edited locally.
+  title             String
+  description       String?
+  channelTitle      String?
+  thumbnails        Thumbnail[]
+  durationSeconds   Int?
+  /// Width divided by height, from the player size YouTube reports. Under 1 means vertical.
+  aspectRatio       Float?
+  tags              String[]
+  ytPublishedAt     DateTime?
+  stats             VideoStats?
+  commentsDisabled  Boolean           @default(false)
+  availability      VideoAvailability @default(UNKNOWN)
+  metadataFetchedAt DateTime?
+
+  cta VideoCta?
+
+  /// Copies of the join models for fast feed filtering. The video service is the only writer.
+  topicIds   String[] @db.ObjectId
+  libraryIds String[] @db.ObjectId
+
+  /// Random integer giving a stable, even feed order without a popularity bias.
+  feedKey     Int
+  searchText  String @default("")
+  titleSearch String @default("")
+
+  createdById String?  @db.ObjectId
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  channel  YouTubeChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  category Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  topics          VideoTopic[]
+  libraries       VideoLibrary[]
+  articles        ArticleVideo[]
+  playlistItems   PlaylistItem[]
+  viewingProgress ViewingProgress[]
+
+  @@index([status, isArchived, availability, kind, categoryId, feedKey, id])
+  @@index([status, isArchived, availability, kind, feedKey, id])
+  @@index([status, isArchived, kind, publishedAt])
+  @@index([topicIds, status, publishedAt])
+  @@index([libraryIds, status, publishedAt])
+  @@index([channelId, ytPublishedAt])
+  @@index([categoryId])
+  @@index([metadataFetchedAt])
+  @@index([titleSearch])
+}
+
+model Article {
+  id             String           @id @default(auto()) @map("_id") @db.ObjectId
+  title          String
+  slug           String           @unique
+  excerpt        String?
+  coverImage     String?
+  coverCaption   String?
+  /// Tiptap JSON validated against an allow-list. HTML is never stored.
+  body           Json
+  headings       ArticleHeading[]
+  sources        ArticleSource[]
+  seo            SeoMetadata?
+  bylineName     String?
+  readingMinutes Int              @default(0)
+  status         ContentStatus    @default(DRAFT)
+  isArchived     Boolean          @default(false)
+  archivedAt     DateTime?
+  publishedAt    DateTime?
+  /// Chosen by editors for Explore's selected articles (§16).
+  isFeatured     Boolean          @default(false)
+  categoryId     String?          @db.ObjectId
+  authorId       String?          @db.ObjectId
+  /// Contributors may only edit drafts assigned to them (§19.4).
+  assigneeIds    String[]         @db.ObjectId
+  searchText     String           @default("")
+  titleSearch    String           @default("")
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  author   User?     @relation("ArticleAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  topics    ArticleTopic[]
+  libraries ArticleLibrary[]
+  videos    ArticleVideo[]
+  playlists ArticlePlaylist[]
+
+  @@index([status, isArchived, publishedAt])
+  @@index([status, isArchived, isFeatured, publishedAt])
+  @@index([categoryId, status, publishedAt])
+  @@index([authorId])
+  @@index([assigneeIds])
+  @@index([titleSearch])
+}
+
+model ExternalResource {
+  id          String        @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  slug        String        @unique
+  description String?
+  sourceName  String
+  url         String        @unique
+  coverImage  String?
+  status      ContentStatus @default(DRAFT)
+  isArchived  Boolean       @default(false)
+  archivedAt  DateTime?
+  publishedAt DateTime?
+  searchText  String        @default("")
+  titleSearch String        @default("")
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  topics    ResourceTopic[]
+  libraries ResourceLibrary[]
+
+  @@index([status, isArchived, publishedAt])
+  @@index([titleSearch])
+}
+
+model Playlist {
+  id                String        @id @default(auto()) @map("_id") @db.ObjectId
+  type              PlaylistType
+  title             String
+  slug              String        @unique
+  /// "yt:<youtubePlaylistId>" or "cur:<uuid>". A unique index on the nullable
+  /// youtubePlaylistId would allow only one curated playlist.
+  sourceKey         String        @unique
+  youtubePlaylistId String?
+  description       String?
+  introduction      String?
+  coverImage        String?
+  channelTitle      String?
+  youtubeChannelId  String?
+  thumbnails        Thumbnail[]
+  syncStatus        SyncStatus    @default(NOT_APPLICABLE)
+  metadataFetchedAt DateTime?
+  itemCount         Int           @default(0)
+  isFeatured        Boolean       @default(false)
+  displayOrder      Int           @default(0)
+  status            ContentStatus @default(DRAFT)
+  isArchived        Boolean       @default(false)
+  archivedAt        DateTime?
+  publishedAt       DateTime?
+  searchText        String        @default("")
+  titleSearch       String        @default("")
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  items     PlaylistItem[]
+  topics    PlaylistTopic[]
+  libraries PlaylistLibrary[]
+  articles  ArticlePlaylist[]
+
+  @@index([status, isArchived, publishedAt])
+  @@index([status, isArchived, isFeatured, displayOrder])
+  @@index([metadataFetchedAt])
+  @@index([titleSearch])
+}
+
+model PlaylistItem {
+  id         String  @id @default(auto()) @map("_id") @db.ObjectId
+  playlistId String  @db.ObjectId
+  videoId    String  @db.ObjectId
+  position   Int
+  note       String?
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  video    Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, videoId])
+  @@index([playlistId, position])
+  @@index([videoId])
+}
+
+/// Scientific-reviewer feedback. It deliberately has no effect on publishing (§19.4).
+model ReviewNote {
+  id         String      @id @default(auto()) @map("_id") @db.ObjectId
+  entityType ContentType
+  entityId   String      @db.ObjectId
+  authorId   String?     @db.ObjectId
+  body       String
+  resolvedAt DateTime?
+  createdAt  DateTime    @default(now())
+
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([authorId])
+}
+
+// ---------------------------------------------------------------------------
+// Explicit join models (§13.1). Each pair is unique, with an index on both sides.
+// ---------------------------------------------------------------------------
+
+model ArticleTopic {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  articleId String @db.ObjectId
+  topicId   String @db.ObjectId
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  topic   Topic   @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, topicId])
+  @@index([topicId])
+}
+
+model ArticleLibrary {
+  id         String  @id @default(auto()) @map("_id") @db.ObjectId
+  articleId  String  @db.ObjectId
+  libraryId  String  @db.ObjectId
+  /// Leads the library's landing page (§14).
+  isFeatured Boolean @default(false)
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  library Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, libraryId])
+  @@index([libraryId])
+}
+
+model ArticleVideo {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  articleId String @db.ObjectId
+  videoId   String @db.ObjectId
+  position  Int    @default(0)
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  video   Video   @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, videoId])
+  @@index([videoId])
+}
+
+model ArticlePlaylist {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  articleId  String @db.ObjectId
+  playlistId String @db.ObjectId
+
+  article  Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, playlistId])
+  @@index([playlistId])
+}
+
+model VideoTopic {
+  id      String @id @default(auto()) @map("_id") @db.ObjectId
+  videoId String @db.ObjectId
+  topicId String @db.ObjectId
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([videoId, topicId])
+  @@index([topicId])
+}
+
+model VideoLibrary {
+  id         String  @id @default(auto()) @map("_id") @db.ObjectId
+  videoId    String  @db.ObjectId
+  libraryId  String  @db.ObjectId
+  /// Leads the library's landing page (§14).
+  isFeatured Boolean @default(false)
+
+  video   Video   @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  library Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+
+  @@unique([videoId, libraryId])
+  @@index([libraryId])
+}
+
+model PlaylistTopic {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  playlistId String @db.ObjectId
+  topicId    String @db.ObjectId
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  topic    Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, topicId])
+  @@index([topicId])
+}
+
+model PlaylistLibrary {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  playlistId String @db.ObjectId
+  libraryId  String @db.ObjectId
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  library  Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, libraryId])
+  @@index([libraryId])
+}
+
+model ResourceTopic {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  resourceId String @db.ObjectId
+  topicId    String @db.ObjectId
+
+  resource ExternalResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  topic    Topic            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceId, topicId])
+  @@index([topicId])
+}
+
+model ResourceLibrary {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  resourceId String @db.ObjectId
+  libraryId  String @db.ObjectId
+
+  resource ExternalResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  library  Library          @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceId, libraryId])
+  @@index([libraryId])
+}
+
+model LibraryTopic {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  libraryId String @db.ObjectId
+  topicId   String @db.ObjectId
+
+  library Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  topic   Topic   @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([libraryId, topicId])
+  @@index([topicId])
+}
+
+// ---------------------------------------------------------------------------
+// Operations
+// ---------------------------------------------------------------------------
+
+model ImportJob {
+  id                String          @id @default(auto()) @map("_id") @db.ObjectId
+  type              ImportJobType
+  status            ImportJobStatus @default(DISCOVERING)
+  channelId         String          @db.ObjectId
+  createdById       String?         @db.ObjectId
+  /// YouTube pagination token, persisted so a job can resume after an interruption.
+  nextPageToken     String?
+  discoveredCount   Int             @default(0)
+  importedCount     Int             @default(0)
+  duplicateCount    Int             @default(0)
+  skippedCount      Int             @default(0)
+  failedCount       Int             @default(0)
+  errors            ImportError[]
+  cancelRequestedAt DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  channel    YouTubeChannel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  createdBy  User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  candidates ImportCandidate[]
+
+  @@index([status, createdAt])
+  @@index([channelId, createdAt])
+}
+
+/// A temporary metadata snapshot for review. A TTL index removes it within 30 days.
+model ImportCandidate {
+  id              String                @id @default(auto()) @map("_id") @db.ObjectId
+  jobId           String                @db.ObjectId
+  youtubeVideoId  String
+  title           String
+  channelTitle    String?
+  description     String?
+  tags            String[]
+  thumbnails      Thumbnail[]
+  durationSeconds Int?
+  ytPublishedAt   DateTime?
+  /// Width divided by height, from the player size YouTube reports.
+  aspectRatio     Float?
+  isEmbeddable    Boolean               @default(true)
+  classification  VideoClassification
+  alreadyImported Boolean               @default(false)
+  isSelected      Boolean               @default(false)
+  assignment      ImportAssignment?
+  result          ImportCandidateResult @default(PENDING)
+  resultMessage   String?
+  createdAt       DateTime              @default(now())
+  expiresAt       DateTime
+
+  job ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, youtubeVideoId])
+  @@index([jobId, classification, alreadyImported, isSelected])
+  @@index([jobId, result])
+}
+
+/// Append-only. Never removed automatically (§20.4). actorEmail is a snapshot, so the
+/// record stays meaningful after the account changes.
+model AuditLog {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  actorId    String?  @db.ObjectId
+  actorEmail String?
+  actorRole  UserRole?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@index([action, createdAt])
+}
+
+model ApplicationSetting {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  key         String   @unique
+  value       Json
+  updatedById String?  @db.ObjectId
+  updatedAt   DateTime @updatedAt
+}
+
+/// Estimated YouTube quota use for one Pacific-time day, when YouTube resets quota.
+model ApiQuotaUsage {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  day        String   @unique
+  units      Int      @default(0)
+  byEndpoint Json?
+  exhausted  Boolean  @default(false)
+  updatedAt  DateTime @updatedAt
+}
+
+model RateLimitBucket {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  key       String   @unique
+  count     Int      @default(0)
+  expiresAt DateTime
+}

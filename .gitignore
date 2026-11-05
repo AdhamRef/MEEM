@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+
+# build and test output
+*.tsbuildinfo
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# local data and uploads
+.data/
+public/uploads/
+
+# environment: never commit real credentials
+.env
+.env.*
+!.env.example
+
+# logs and OS files
+*.log
+.DS_Store
+Thumbs.db
+
+# local Claude Code state
+.claude/

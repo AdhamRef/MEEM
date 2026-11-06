@@ -260,6 +260,13 @@ describe("the feed", () => {
     expect(countIn(items, skipped.id)).toBeLessThanOrEqual(1);
   });
 
+  it("shows stored likes and comment counts, costing nothing to read", async () => {
+    const { id } = await category("أ");
+    await video(id, { stats: { likeCount: 1200n, commentCount: 34n, fetchedAt: new Date() } });
+    const { items } = await getFeedPage(null, {});
+    expect(items[0]).toMatchObject({ likeCount: 1200, commentCount: 34 });
+  });
+
   it("rejects bad session hints and limits large ones", async () => {
     const { id } = await category("أ");
     await video(id);
@@ -279,7 +286,7 @@ describe("the feed", () => {
 });
 
 describe("video cards", () => {
-  it("show stored data, and no statistics while they're off", async () => {
+  it("show stored data, including stored statistics, and invent nothing", async () => {
     const cat = await category("فقه");
     const row = await video(cat.id, {
       title: "العنوان الأصلي",

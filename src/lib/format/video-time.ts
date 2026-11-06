@@ -7,6 +7,11 @@ const UNITS: { unit: Intl.RelativeTimeFormatUnit; seconds: number }[] = [
   { unit: "minute", seconds: 60 },
 ];
 
+/** A count as people read it at a glance: 1.2K, in Arabic. */
+export function formatCount(count: number): string {
+  return new Intl.NumberFormat("ar", { notation: "compact", maximumFractionDigits: 1 }).format(count);
+}
+
 /** The badge on a video's thumbnail: 0:45, 12:05, or 1:02:03. Null when the length isn't known. */
 export function formatDuration(totalSeconds: number | null): string | null {
   if (totalSeconds === null || !Number.isFinite(totalSeconds) || totalSeconds <= 0) return null;

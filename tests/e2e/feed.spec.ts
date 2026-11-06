@@ -134,33 +134,48 @@ test.describe("playback rules", () => {
     expect(lastCalls[0]?.name).toBe("pauseVideo");
   });
 
-  test("a first visit opens on a welcome screen, and its one tap starts the video from the top with sound", async ({ page }) => {
+  test("a first visit starts playing at once, with no button in the way, and the first touch brings sound", async ({ page }) => {
     await withDefaultSound(page);
-    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
-    await page.goto("/");
-    const gate = page.getByTestId("sound-gate");
-    await expect(gate).toBeVisible({ timeout: 15_000 });
-    await expect(gate).toContainText("ابدأ المشاهدة");
-    await expect(activeFrame(page)).toHaveCount(1, { timeout: 15_000 });
+    await openFeed(page);
     await expect.poll(async () => (await calls(page)).some((call) => call.name === "playVideo")).toBeTruthy();
+    const hint = page.getByTestId("sound-hint");
+    await expect(hint).toBeVisible();
 
-    await gate.click();
-    await expect(gate).toHaveCount(0);
+    await page.mouse.click(5, 300);
+    await expect(hint).toHaveCount(0);
     await expect.poll(async () => (await calls(page)).some((call) => call.name === "unMute")).toBeTruthy();
-    expect((await calls(page)).some((call) => call.name === "seekTo" && call.arg === 0)).toBe(true);
-    await expect(page.getByTestId("sound-hint")).toHaveCount(0);
   });
 
-  test("someone who chose to mute isn't asked", async ({ page }) => {
+  test("a first touch that's a swipe also brings sound, and moves to the next card", async ({ page, browserName }, testInfo) => {
+    test.skip(testInfo.project.name !== "mobile" || browserName !== "chromium", "Touch events on a phone profile");
+    await withDefaultSound(page);
     await openFeed(page);
-    await expect(page.getByTestId("sound-gate")).toHaveCount(0);
+    await expect(page.getByTestId("sound-hint")).toBeVisible();
+    await page.waitForTimeout(300);
+
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type: "touchStart" | "touchMove" | "touchEnd", y?: number) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: y === undefined ? [] : [{ x: 200, y }] });
+    await touch("touchStart", 600);
+    for (const y of [560, 500, 420, 340, 280]) await touch("touchMove", y);
+    await touch("touchEnd");
+
+    await expect.poll(async () => (await calls(page)).some((call) => call.name === "unMute")).toBeTruthy();
+    await expect(page.getByTestId("sound-hint")).toHaveCount(0);
+    await expect.poll(() => scrollerPosition(page), { timeout: 5000 }).toBeGreaterThan(100);
+    const scroller = page.getByTestId("feed-scroller");
+    await expect.poll(() => scroller.evaluate((element) => (element as HTMLElement).style.touchAction)).toBe("");
+  });
+
+  test("someone who chose to mute is left muted, with no hint", async ({ page }) => {
+    await openFeed(page);
+    await expect(page.getByTestId("sound-hint")).toHaveCount(0);
   });
 
   test("sound stays on for each video after that, and a chosen mute is remembered", async ({ page }) => {
     await withDefaultSound(page);
-    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
-    await page.goto("/");
-    await page.getByTestId("sound-gate").click({ timeout: 15_000 });
+    await openFeed(page);
+    await expect(page.getByTestId("sound-hint")).toBeVisible();
+    await page.mouse.click(5, 300);
     await expect(page.getByTestId("sound-hint")).toHaveCount(0);
     const unmutes = (await calls(page)).filter((call) => call.name === "unMute").length;
 
@@ -697,14 +712,31 @@ test.describe("shareable pages", () => {
     await expect(page).toHaveURL(`/videos/${video.id}`);
   });
 
-  test("the video page doesn't autoplay, and credits YouTube", async ({ page }) => {
+  test("the video page plays by itself behind our own controls, stays at the top, and credits YouTube", async ({ page }) => {
     const video = await prisma.video.findUniqueOrThrow({ where: { youtubeVideoId: "e2eLong0000" } });
     await page.goto(`/videos/${video.id}`);
 
     await expect(page.locator("iframe")).toHaveCount(1);
     const vars = await page.evaluate(() => (window as unknown as { __ytOptions: { playerVars: Record<string, unknown> }[] }).__ytOptions[0]!.playerVars);
-    expect(vars).toMatchObject({ autoplay: 0, controls: 1 });
+    expect(vars).toMatchObject({ autoplay: 1, controls: 0 });
     await expect(page.getByTestId("youtube-attribution")).toContainText("المصدر: YouTube");
+
+    // Nothing reaches YouTube's player, and our controls really drive it.
+    await expect(page.getByTestId("video-tap")).toBeVisible();
+    await expect(page.getByTestId("video-poster")).toHaveCount(0, { timeout: 10_000 });
+    await page.getByTestId("control-play").click();
+    await expect.poll(async () => (await calls(page)).some((call) => call.name === "pauseVideo")).toBeTruthy();
+    await page.getByTestId("control-play").click();
+    await page.getByTestId("control-seek").fill("30");
+    await expect.poll(async () => (await calls(page)).some((call) => call.name === "seekTo" && call.arg === 30)).toBeTruthy();
+
+    // It stays at the top while the page scrolls under it.
+    const top = await page.getByTestId("video-frame").evaluate((element) => {
+      window.scrollTo(0, 400);
+      return element.getBoundingClientRect().top;
+    });
+    await expect.poll(async () => page.getByTestId("video-frame").evaluate((element) => element.getBoundingClientRect().bottom)).toBeGreaterThan(100);
+    expect(top).toBeLessThanOrEqual(120);
 
     const box = await page.locator("iframe").boundingBox();
     expect(box!.width).toBeGreaterThanOrEqual(200);

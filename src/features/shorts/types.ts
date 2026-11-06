@@ -22,6 +22,7 @@ export interface VideoCard {
   viewCount: number | null;
   /** The same, for likes. It's read from what the regular refresh stored, so showing it costs no quota. */
   likeCount: number | null;
+  commentCount: number | null;
 }
 
 export interface VideoCardCta {

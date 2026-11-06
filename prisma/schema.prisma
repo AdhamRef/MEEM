@@ -938,6 +938,8 @@ model ImportCandidate {
   ytPublishedAt   DateTime?
   /// Width divided by height, from the player size YouTube reports.
   aspectRatio     Float?
+  /// Comes with the same request, so it costs no extra quota. Expires with the candidate.
+  stats           VideoStats?
   isEmbeddable    Boolean               @default(true)
   classification  VideoClassification
   alreadyImported Boolean               @default(false)

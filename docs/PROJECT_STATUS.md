@@ -1,10 +1,28 @@
 # Project status
 
-Last updated: 2026-11-05
+Last updated: 2026-11-06
 
 **Phases 2, 3, 5, 6, and 7 are implemented, and Phase 4 is implemented with its real-device check still open.** Phase 1 remains open, because it needs real phones and a real Short for the vertical-video check, and Phase 4's player choice and layout depend on those same results. The owner asked to proceed in this state. Nothing has been committed. Phase 8 has not started.
 
 Everything the owner needs to do, across all phases, is in [OWNER_ACTIONS.md](OWNER_ACTIONS.md).
+
+## Latest changes, 2026-11-06
+
+Owner's requests, and nothing is committed yet.
+
+| Change | What it does | Verified |
+|---|---|---|
+| **Buffered players** | Real players wait on the next 4 cards (`FEED_BUFFER_AHEAD`), which breaks YouTube's rules by the owner's decision. See [YOUTUBE_COMPLIANCE_AUDIT.md](YOUTUBE_COMPLIANCE_AUDIT.md). | Real player, emulated Chromium, one desktop: a buffered video starts in about 0.29 s, against 1.04 to 1.77 s. |
+| **Thumbnail on swipe** | A card starts at 5% visible, its thumbnail goes with no fade, and the card being left keeps running as it slides out. | Real player, from a key press: the thumbnail left at 451 and 573 ms in two runs, around the card settling at about 525 ms. Before: 614 to 752 ms. |
+| **Sound** | On by default, with no start button. A browser refuses sound before a first touch, so the first video starts silently with a small hint, and any first touch brings sound, including a swipe. | Real player with the browser's autoplay policy enforced: refused without a gesture, and has sound after a click. The swipe is tested with a stub on the emulated phone profile only. **Not tried on a real phone.** |
+| **Video pages** | YouTube's interface is cropped away, with our own play, seek, sound, and fullscreen controls. The player stays at the top and starts by itself. | Browser tests, and the real player. |
+| **Search** | It failed on the Atlas database because its text indexes were missing. Created with `npm run db:indexes`. | A real text search on that database returns results. **`npm run db:sync` still stops there, on duplicate import previews.** See OWNER_ACTIONS. |
+| **Feed algorithm** | Channels are chosen for each card, spaced across pages, and big channels can't dominate. This visit's completions, replays, saves, and skips move the next pages. The feed never ends. | Unit, integration, and browser tests, including a simulated library with one dominant channel. **Not yet watched on the real library.** |
+| **Explore** | A video-site-style page: search, category chips, and a grid that loads everything as people scroll, with Shorts and editorial shelves between. | Browser tests on mobile and desktop, and screenshots. **Only seen with placeholder thumbnails.** |
+| **Likes and comment counts** | Stored by the importer and refresh job with no extra quota, and shown as static numbers in the feed, on Explore, and on video pages. Existing videos get theirs from `npm run youtube:backfill-stats` or the admin button. Comment text stays on the video page. | Integration tests with YouTube mocked. **The backfill hasn't been run on the real data.** |
+
+**Not verified:** anything on a real phone, above all whether sound carries between players on an iPhone, and how up to 5 players affect a phone's memory and heat. Whether hidden buffering triggers ads wasn't measured.
+
 
 Plan: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) · Specification: [MASTER_SPECIFICATION.md](MASTER_SPECIFICATION.md)
 
@@ -104,8 +122,8 @@ Also delivered, as the plan lists: tokens, the self-hosted font, shadcn in RTL m
 
 | Criterion | Status | Evidence |
 |---|---|---|
-| Only one video ever plays | **Met in emulation** | Browser tests with both a stub and the real YouTube player. One player exists at any time. **Not confirmed on real phones.** |
-| No player for off-screen cards | **Met** | Others show thumbnails. An empty tab or scrolling away destroys or pauses the player. |
+| Only one video ever plays | **No longer met in the feed, by the owner's decision of 2026-11-06.** | One is heard. Others run muted out of sight while buffering, and the card being left runs muted for up to 0.6 s. Setting `FEED_BUFFER_AHEAD` to 0 restores this. |
+| No player for off-screen cards | **No longer met in the feed, for the same reason** | Up to 4 buffered players, capped by a browser test. An empty tab hides them. |
 | Nothing covers the player | **Met** | Checked at 25 points across the player, and the real player at 9 points. At least 200×200 at all tested sizes. |
 | Feed renders use no YouTube API calls | **Met** | Integration and browser tests assert no such request. |
 | No duplicates across pagination | **Met** | Tested across categories, random start points, wrap-around, and identical feed keys. |

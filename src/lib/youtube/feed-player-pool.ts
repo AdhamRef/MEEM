@@ -61,7 +61,7 @@ const LEAVING_MS = 600;
 /** Measured on the real player: a refused unMute pauses the video within about this time. */
 const SOUND_REFUSAL_WINDOW_MS = 2000;
 
-export function readSoundPreference(): boolean {
+function readSoundPreference(): boolean {
   try {
     return window.localStorage.getItem(SOUND_PREFERENCE_KEY) !== "off";
   } catch {
@@ -77,7 +77,7 @@ function saveSoundPreference(isOn: boolean): void {
   }
 }
 
-export const hasBrowserActivation = () => navigator.userActivation?.hasBeenActive === true;
+const hasBrowserActivation = () => navigator.userActivation?.hasBeenActive === true;
 
 /**
  * OWNER'S DECISION, 2026-11-06, made knowing it breaks YouTube's rules: the feed keeps real players
@@ -156,18 +156,9 @@ export class FeedPlayerPool {
     for (const slot of this.slots) if (slot.key !== null) this.events.place(slot.mount, slot.index);
   }
 
-  /**
-   * The tap on the welcome screen, which is what lets a browser allow sound. The video has been
-   * running silently behind it, so it goes back to its start and is heard from the first moment.
-   */
-  beginWithSound(): void {
-    this.wantsSound = true;
-    this.soundIsAllowed = true;
-    const slot = this.activeSlot;
-    if (!slot?.player || !slot.isReady) return;
-    slot.player.seekTo(0, true);
-    this.turnSoundOn(slot.player);
-    slot.player.playVideo();
+  /** A swipe the feed handled itself, which a browser accepts as permission for sound. */
+  unlockSound(): void {
+    this.onGesture();
   }
 
   /** From a person's action, using the documented mute and unMute methods. */

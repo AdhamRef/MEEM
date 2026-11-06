@@ -187,7 +187,8 @@ export async function runDiscoveryStep(actor: Actor | null, rawJobId: unknown): 
     // One request for the whole page, never one per video (§7.3).
     const videos = await fetchVideoBatch(
       toFetch.filter((id) => !seen.has(id)),
-      { includeStatistics: false },
+      // The same request either way, so this costs no extra quota.
+      { includeStatistics: settings.statisticsEnabled },
     );
 
     const rows = videos.map((video) => ({
@@ -202,6 +203,7 @@ export async function runDiscoveryStep(actor: Actor | null, rawJobId: unknown): 
       ytPublishedAt: video.ytPublishedAt,
       isEmbeddable: video.availability === "AVAILABLE",
       aspectRatio: video.aspectRatio,
+      stats: settings.statisticsEnabled && video.statistics ? { ...video.statistics, fetchedAt: now } : null,
       classification: classifyByDuration(video.durationSeconds, settings.maxShortSeconds, video.aspectRatio),
       alreadyImported: imported.has(video.youtubeVideoId),
       expiresAt: candidateExpiry(now),
@@ -374,6 +376,7 @@ async function importCandidate(candidate: Prisma.ImportCandidateGetPayload<objec
           thumbnails: candidate.thumbnails,
           durationSeconds: candidate.durationSeconds,
           aspectRatio: candidate.aspectRatio,
+          stats: candidate.stats,
           tags: candidate.tags,
           ytPublishedAt: candidate.ytPublishedAt,
           availability: "AVAILABLE",

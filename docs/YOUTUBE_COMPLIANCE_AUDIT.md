@@ -16,6 +16,8 @@ Rules this conflicts with: autoplay only when more than half the player is visib
 
 **This won't pass an audit as it stands.** Set `FEED_IMMERSIVE_OVERLAY` to false before applying, which also turns buffering off and restores the layout the tables below describe. The tables describe that compliant layout, not the current one.
 
+**Video pages and statistics also differ, by the owner's decision of 2026-11-06.** Video pages crop YouTube's interface away, put our own controls in front, start by themselves, and stay at the top while scrolling, under the same `FEED_IMMERSIVE_OVERLAY` switch. Statistics are on: likes, views, and comment counts are stored and shown, which the plan's R2 says YouTube limits to audited developers. Set `statisticsEnabled` to false in `DEFAULT_YOUTUBE_SETTINGS` before applying, and remove what's stored.
+
 **Explore also looks much like YouTube's home page, by the owner's decision of 2026-11-06:** a grid of video cards, category chips, and a Shorts row, in this site's own name, logo, and colours. The curation, articles, topics, and libraries are what give it independent value, but the resemblance adds to question 1 below (III.I.1, and the guide's "identical copy of YouTube"). Worth reviewing before the audit. It starts no playback by itself.
 
 ## Before submitting

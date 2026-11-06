@@ -80,7 +80,8 @@ const FAKE_IFRAME_API = `
 export const ONLY_REAL_GESTURES = () => {
   const target = window as unknown as { __ytActivated: boolean };
   target.__ytActivated = false;
-  for (const name of ["click", "keydown"]) {
+  // A touch that ends without the browser scrolling counts too, as it does for a real visitor.
+  for (const name of ["click", "keydown", "touchend"]) {
     window.addEventListener(name, () => {
       target.__ytActivated = true;
     }, true);
@@ -109,7 +110,7 @@ export const test = base.extend({
     // The first-visit notice has tests of its own. Elsewhere it would only shift layouts being measured.
     await context.addInitScript(() => window.localStorage.setItem("privacy-notice.v1", "seen"));
     await context.addInitScript(ONLY_REAL_GESTURES);
-    // The welcome screen has tests of its own too. Everywhere else it would cover what's being tested.
+    // Starting muted by choice is the steady state most tests want. Sound's own tests undo this.
     await context.addInitScript(() => {
       try {
         if (!window.sessionStorage.getItem("keep-default-sound")) window.localStorage.setItem("feed.sound", "off");

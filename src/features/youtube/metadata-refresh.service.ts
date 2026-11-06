@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { recordAudit } from "@/features/admin/audit";
 import { assertPermission, type Actor } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
@@ -165,5 +166,61 @@ export async function runScheduledRefresh() {
   await prisma.auditLog.create({
     data: { actorEmail: "system:cron", action: "youtube.refresh_metadata", entityType: "Video", metadata: { ...report } },
   });
+  return report;
+}
+
+export interface StatisticsBackfillReport {
+  updated: number;
+  remaining: number;
+  stoppedBy?: RefreshReport["stoppedBy"];
+}
+
+/**
+ * Likes and comment counts for videos stored before they were collected. Costs 1 quota unit per 50
+ * videos. It only reads what's missing, so running it again continues where it stopped.
+ */
+export async function backfillVideoStatistics(maxBatches: number, now = new Date()): Promise<StatisticsBackfillReport> {
+  const missing = { availability: "AVAILABLE", OR: [{ stats: { isSet: false } }, { stats: null }] } satisfies Prisma.VideoWhereInput;
+  const report: StatisticsBackfillReport = { updated: 0, remaining: 0 };
+  if (!isYouTubeApiConfigured()) report.stoppedBy = "NOT_CONFIGURED";
+
+  let afterId: string | undefined;
+  for (let batchNumber = 0; batchNumber < maxBatches && !report.stoppedBy; batchNumber += 1) {
+    const batch: { id: string; youtubeVideoId: string }[] = await prisma.video.findMany({
+      where: { ...missing, ...(afterId ? { id: { gt: afterId } } : {}) },
+      orderBy: { id: "asc" },
+      take: VIDEOS_PER_REQUEST,
+      select: { id: true, youtubeVideoId: true },
+    });
+    if (batch.length === 0) break;
+    afterId = batch.at(-1)!.id;
+
+    let fetched;
+    try {
+      fetched = await fetchVideoBatch(
+        batch.map((video) => video.youtubeVideoId),
+        { includeStatistics: true },
+      );
+    } catch (error) {
+      report.stoppedBy = stopReasonOf(error);
+      break;
+    }
+    const byYouTubeId = new Map(fetched.map((video) => [video.youtubeVideoId, video]));
+    for (const { id, youtubeVideoId } of batch) {
+      const statistics = byYouTubeId.get(youtubeVideoId)?.statistics;
+      if (!statistics) continue;
+      await prisma.video.update({ where: { id }, data: { stats: { ...statistics, fetchedAt: now } } });
+      report.updated += 1;
+    }
+  }
+
+  report.remaining = await prisma.video.count({ where: missing });
+  return report;
+}
+
+export async function backfillVideoStatisticsAs(actor: Actor | null, maxBatches = 20): Promise<StatisticsBackfillReport> {
+  assertPermission(actor, "youtube.import");
+  const report = await backfillVideoStatistics(maxBatches);
+  await recordAudit(prisma, actor, { action: "youtube.backfill_statistics", entityType: "Video", metadata: { updated: report.updated, remaining: report.remaining } });
   return report;
 }

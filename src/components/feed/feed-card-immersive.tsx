@@ -2,13 +2,14 @@
 
 /* eslint-disable @next/next/no-img-element -- Thumbnails load directly from YouTube by design, and aren't re-processed or re-hosted. */
 
-import { ArrowUpLeft, ChevronDown, ChevronUp, ExternalLink, MessageCircle, MonitorPlay, Play, Tv, Volume2, VolumeX } from "lucide-react";
+import { ArrowUpLeft, ChevronDown, ChevronUp, ExternalLink, MessageCircle, MonitorPlay, Play, ThumbsUp, Tv, Volume2, VolumeX } from "lucide-react";
 import Link from "next/link";
 import { forwardRef, type CSSProperties, type ReactNode } from "react";
 import { BrandMark } from "@/components/shared/brand-mark";
 import { SaveButton, ShareButton } from "@/components/video/video-actions";
 import { Button } from "@/components/ui/button";
 import { strings } from "@/config/strings.ar";
+import { formatCount } from "@/lib/format/video-time";
 import { cn } from "@/lib/utils";
 import { youtubeWatchUrl } from "@/lib/youtube/ids";
 import { feedVideoRatio, statusMessage, type FeedCardProps } from "./feed-card";
@@ -172,7 +173,15 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
         <RailAction label={isSaved ? strings.feed.saved : strings.feed.save}>
           <SaveButton videoId={video.id} isSaved={isSaved} callbackPath={sharePath} onChange={onSavedChange} onFailure={onNotice} />
         </RailAction>
-        <RailAction label={strings.feed.comments}>
+        {video.likeCount !== null ? (
+          // A stored count from YouTube, and not a button, since nothing can be liked from here.
+          <RailAction label={formatCount(video.likeCount)}>
+            <span data-slot="button" role="img" aria-label={`${video.likeCount} ${strings.feed.likes}`} className="inline-flex items-center justify-center" data-testid="feed-likes">
+              <ThumbsUp aria-hidden />
+            </span>
+          </RailAction>
+        ) : null}
+        <RailAction label={video.commentCount !== null ? formatCount(video.commentCount) : strings.feed.comments}>
           <Button asChild variant="ghost" size="icon" aria-label={strings.feed.comments} title={strings.feed.comments}>
             <Link href={`/videos/${video.id}#comments`}>
               <MessageCircle aria-hidden />

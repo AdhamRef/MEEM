@@ -50,8 +50,6 @@ test.beforeAll(async () => {
 async function openCategory(page: Page) {
   await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
   await page.goto("/");
-  // A real browser refuses sound until this tap, so a new visitor always meets it.
-  await page.getByTestId("sound-gate").click({ timeout: 30_000 });
   await page.getByTestId("feed-tabs").getByRole("button", { name: "اختبار المشغل" }).click();
 }
 
@@ -94,7 +92,7 @@ test("the sound control really changes the real player's state", async ({ page }
   await expect(sound).toHaveAttribute("aria-label", first!);
 });
 
-test("the welcome tap gives the first video sound, on the real player", async ({ page }) => {
+test("the first video plays at once, silently, and the first click gives it sound, on the real player", async ({ page }) => {
   await openCategory(page);
   await expect(page.getByTestId("feed-card").first()).toContainText("اختبار المشغل", { timeout: 30_000 });
   const first = page.getByTestId("feed-card").first();
@@ -107,13 +105,15 @@ test("the welcome tap gives the first video sound, on the real player", async ({
   await expect(first.getByTestId("paused-indicator")).toHaveCount(0);
 });
 
-test("the video page shows the real player, without autoplay", async ({ page }) => {
+test("the video page starts the real player by itself, behind our controls", async ({ page }) => {
   const video = await prisma.video.findUniqueOrThrow({ where: { youtubeVideoId: "jNQXAC9IVRw" } });
   await page.goto(`/videos/${video.id}`);
 
   const frame = page.locator('iframe[src*="youtube.com/embed/jNQXAC9IVRw"]');
   await expect(frame).toHaveCount(1, { timeout: 30_000 });
-  expect(await frame.getAttribute("src")).toContain("autoplay=0");
+  expect(await frame.getAttribute("src")).toContain("controls=0");
+  await expect(page.getByTestId("video-poster")).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByTestId("control-time")).not.toHaveText(/^0:00 /, { timeout: 15_000 });
   await expect(page.getByText("تعذّر تشغيل هذا المقطع هنا.")).toHaveCount(0);
 });
 

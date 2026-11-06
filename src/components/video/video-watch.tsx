@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FEED_IMMERSIVE_OVERLAY } from "@/config/feed";
 import { strings } from "@/config/strings.ar";
 import { recordGuestSignal } from "@/features/recommendations/guest-signals";
 import { useRecordView } from "@/components/knowledge/view-recorder";
@@ -14,10 +15,16 @@ import { formatDuration, resumePosition } from "@/features/playlists/rules";
 import type { VideoCard } from "@/features/shorts/types";
 import { useActivePlayer } from "@/hooks/useActivePlayer";
 import { cn } from "@/lib/utils";
+import { ImmersiveVideoFrame } from "./immersive-video-frame";
 import { SaveButton, ShareButton, YouTubeAttribution } from "./video-actions";
 import { YouTubeComments } from "./youtube-comments";
 
-/** One video on its own page. It doesn't autoplay, because the person chose to come here. */
+/**
+ * One video on its own page. OWNER'S DECISION, 2026-11-06, under the same switch as the feed
+ * (FEED_IMMERSIVE_OVERLAY): YouTube's interface is cropped away, our own controls sit over the
+ * player, and it starts by itself with sound where the browser allows. With the switch off, it
+ * follows YouTube's rules: the player's own controls, and it waits for a click.
+ */
 export function VideoWatch({ video, related }: { video: VideoCard; related?: ReactNode }) {
   const { status: sessionStatus } = useSession();
   const mountRef = useRef<HTMLDivElement>(null);
@@ -62,11 +69,14 @@ export function VideoWatch({ video, related }: { video: VideoCard; related?: Rea
     [video],
   );
 
-  const { state, errorCode, getPosition, resumeAt } = useActivePlayer({
+  const { state, errorCode, getPosition, resumeAt, isMuted, toggleSound, togglePlay } = useActivePlayer({
     mountRef,
     videoId: video.youtubeVideoId,
     isInView: true,
-    autoplay: false,
+    autoplay: FEED_IMMERSIVE_OVERLAY,
+    showControls: !FEED_IMMERSIVE_OVERLAY,
+    holdUntilFirstFrame: FEED_IMMERSIVE_OVERLAY,
+    startWithSound: FEED_IMMERSIVE_OVERLAY,
     strategy: "recreate",
     onWatchFinished: handleWatchFinished,
   });
@@ -113,15 +123,19 @@ export function VideoWatch({ video, related }: { video: VideoCard; related?: Rea
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-5 pb-8 md:px-4 md:pt-6">
-      <div
-        ref={mountRef}
-        data-testid="player-mount"
-        className={cn("mx-auto bg-black", video.kind === "SHORT" ? "aspect-9/16 max-h-[75dvh] min-h-[200px] max-w-full" : "aspect-video min-h-[200px] w-full")}
-      />
+      {FEED_IMMERSIVE_OVERLAY ? (
+        <ImmersiveVideoFrame mountRef={mountRef} video={video} state={state} isMuted={isMuted} getPosition={getPosition} resumeAt={resumeAt} toggleSound={toggleSound} togglePlay={togglePlay} />
+      ) : (
+        <div
+          ref={mountRef}
+          data-testid="player-mount"
+          className={cn("mx-auto bg-black", video.kind === "SHORT" ? "aspect-9/16 max-h-[75dvh] min-h-[200px] max-w-full" : "aspect-video min-h-[200px] w-full")}
+        />
+      )}
 
       <div className="space-y-3 px-4 md:px-0">
         {video.category ? <Badge variant="secondary">{video.category.title}</Badge> : null}
-        {video.viewCount !== null || video.likeCount !== null ? (
+        {video.viewCount !== null || video.likeCount !== null || video.commentCount !== null ? (
           <p className="flex flex-wrap gap-x-4 text-xs text-text-secondary" data-testid="video-statistics">
             {video.viewCount !== null ? (
               <span>
@@ -131,6 +145,11 @@ export function VideoWatch({ video, related }: { video: VideoCard; related?: Rea
             {video.likeCount !== null ? (
               <span>
                 <bdi>{video.likeCount.toLocaleString("ar")}</bdi> {strings.feed.likes}
+              </span>
+            ) : null}
+            {video.commentCount !== null ? (
+              <span>
+                <bdi>{video.commentCount.toLocaleString("ar")}</bdi> {strings.feed.commentsCount}
               </span>
             ) : null}
           </p>

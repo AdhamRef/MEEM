@@ -86,8 +86,9 @@ Anything past 30 days with nothing fresher is withdrawn the same way, even when 
 
 ## Likes and comments
 
-- **Likes and views** are read from what the regular metadata refresh stored, so showing them costs no quota. They appear on video pages and Explore only when `statisticsEnabled` is on, which stays off until the API Compliance Audit confirms it's allowed. Nothing can be liked from this site, as that would need YouTube sign-in scopes, which this project doesn't request.
-- **Comments** cost quota on each load, so they stay on the video page, read-only and fetched when opened. They aren't shown on Explore or in the feed.
+- **Likes, views, and comment counts** come with the same `videos.list` request the importer and the refresh job already make, so they cost no extra quota. They're stored and shown as they are, never fetched live, in the feed, on Explore, and on video pages. The refresh job updates them within YouTube's 30-day limit as part of its normal run. Statistics are on by the owner's decision of 2026-11-06. Nothing can be liked from this site, as that would need YouTube sign-in scopes, which this project doesn't request.
+- **Videos stored before this** get theirs from `npm run youtube:backfill-stats`, or the button on the admin's YouTube status page. It costs 1 quota unit per 50 videos and only reads what's missing, so it can be run again.
+- **Comment text** costs quota on each load, so it stays on the video page, read-only and fetched when opened. It isn't shown on Explore or in the feed.
 
 ## The player
 
@@ -98,12 +99,14 @@ Anything past 30 days with nothing fresher is withdrawn the same way, even when 
 - **The card being left** keeps running, muted, for up to 0.6 seconds as it slides out, rather than turning back into its thumbnail. Coming back within that time carries on where it was.
 - **Why a buffered card isn't simply shown instead of its thumbnail.** A paused YouTube player shows a dimmed picture with a large play icon, which looks worse. YouTube also shows its own pause icon over a video for a few seconds after it starts, which can't be hidden and which fades by itself.
 - **Fast swipes.** A card with no buffered player shows its thumbnail, which drifts slowly. The spinner stays out of sight for the first 1.2 seconds.
-- **Sound.** On by default, and a person's mute is remembered in the browser. **No browser allows sound before a person has touched the page**, which was measured on the real player: playing unmuted fires `onAutoplayBlocked` and doesn't start, and unmuting a running video pauses it. So where a browser would refuse, the feed opens on a one-tap welcome screen (`SoundGate`, the owner's decision of 2026-11-06). The first video runs muted behind it, and the tap returns it to the start with sound, and every video after that has sound. Someone who chose to mute isn't asked, and if a browser allows sound anyway, the screen goes by itself. If a browser still refuses, the video goes back to muted with a "tap for sound" hint rather than stopping. Whether sound carries from one player to another on real phones, above all iPhones, **hasn't been tested**.
+- **Sound.** On by default, and a person's mute is remembered in the browser. **No browser allows sound before a person has touched the page**, which was measured on the real player: playing unmuted fires `onAutoplayBlocked` and doesn't start, and unmuting a running video pauses it. So the first video starts at once and silently where it has to, with a small "tap for sound" hint, and the first touch brings sound, for that video and every one after. There's no start button, by the owner's decision of 2026-11-06. Browsers don't count a scroll as permission, so until sound is allowed the feed moves with the finger itself, which makes a first swipe count too, and normal scrolling returns straight after. A mouse wheel can't count, so on a computer it takes a click or a key. Someone who chose to mute stays muted. If a browser still refuses, the video goes back to muted rather than stopping. Whether sound carries from one player to another on real phones, above all iPhones, **hasn't been tested**.
 
-Everywhere else:
+**Video pages**, under the same switch, crop YouTube's interface away and use our own controls: play, seek, sound, and fullscreen where the browser offers it, through documented player methods. The player stays at the top while scrolling, and starts by itself, with sound if the person arrived by a click.
+
+Everywhere else, including playlist pages:
 
 - One player per page, created only when needed.
-- Autoplay starts muted. Other pages wait for a click.
+- Other pages wait for a click.
 - Nothing is ever placed in front of the player. **The feed uses YouTube's documented `controls=0` setting** (the owner's decision of 2026-11-05, for a cleaner vertical view), so its control bar doesn't show there. Sound and next are outside the player, and tapping a video pauses it, which YouTube handles. Video and playlist pages keep the controls. The end screen is left alone. A video ending stays on the end screen, with "next" offered outside.
 - It pauses when hidden, and nothing plays in the background.
 - `Referrer-Policy: strict-origin-when-cross-origin` is set globally, because the player fails with error 153 without a referrer.

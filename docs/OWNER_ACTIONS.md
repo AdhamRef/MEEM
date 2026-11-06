@@ -24,7 +24,8 @@ If you only have one kind of phone, send that one's results, and find the other 
 Please also try the real feed on each phone, with a few videos published, and tell me:
 
 - [ ] Does swiping to the next video feel instant?
-- [ ] Does the welcome screen's tap start the first video with sound?
+- [ ] Does your first swipe or tap bring sound on? On iPhone, does it stay on for the next videos?
+- [ ] On a long video, do the play, seek, and fullscreen controls work, and does the player stay at the top as you scroll?
 - [ ] Is YouTube's pause icon, shown briefly over each video as it starts, acceptable? I can't remove it from here.
 - [ ] After your first tap, does the sound stay on as you swipe to the next videos? **iPhone may not allow this with several players.** If it doesn't, we'd need to choose between sound and buffering there.
 - [ ] Does the phone stay smooth and cool after a few minutes, with up to 5 players loaded?
@@ -37,7 +38,8 @@ Please also try the real feed on each phone, with a few videos published, and te
 
 ### After pulling the feed update
 
-- [ ] Run `npm run db:sync` on each database once. It adds an index that the new feed's queries use, and they work without it but more slowly. Never run `prisma db push` alone.
+- [ ] **`npm run db:sync` can't finish on your Atlas database yet.** It stops at duplicate import previews, in `ImportCandidate`, so required unique indexes are missing. Search and the feed already work: I created those indexes separately on 2026-11-06. The duplicates need removing once no import is running.
+- [ ] **Never run `prisma db push` alone.** It deletes the search indexes, and every search then fails with an unexpected error.
 
 ### 3. Finish Google sign-in
 
@@ -91,7 +93,8 @@ I can prepare the material, but these need you, and some need a person qualified
 ### Legal and compliance
 
 - [ ] **Explore now looks much like YouTube's home page, by your decision of 2026-11-06.** That adds to the project's largest risk (R1). Have it in mind for the audit.
-- [ ] **Likes and view counts are built but off** until the audit confirms they're allowed. Showing them costs no extra quota. Comments do cost quota, so they stay on the video page.
+- [ ] **Get likes for the videos you already have:** run `npm run youtube:backfill-stats`, or press the button on `/admin/youtube-status`. For your 11,578 videos it costs about 232 of today's 10,000 quota units. New imports get them automatically.
+- [ ] **Likes and comment counts are on by your decision of 2026-11-06.** YouTube limits storing them, so review this before the audit. Comment text costs quota on each load, so it stays on the video page.
 - [ ] **The feed currently breaks YouTube's rules, by your decisions of 2026-11-05 and 2026-11-06:** the overlay, and the hidden buffered players. Set `FEED_IMMERSIVE_OVERLAY` to false in `src/config/feed.ts` before applying for the audit, or if YouTube contacts you, which turns both off. See [YOUTUBE_COMPLIANCE_AUDIT.md](YOUTUBE_COMPLIANCE_AUDIT.md).
 - [ ] **Apply for the YouTube API Compliance Audit.** This is the project's largest risk, since whether a multi-channel feed is allowed is unresolved (R1). Launching before clearance risks losing API access. I'll prepare the submission material in Phase 9. Permission from channel owners would also help.
 - [ ] **Who is responsible for the site:** a name or legal entity, and a country

@@ -83,3 +83,7 @@ npm run build
 ## Known dependency warnings
 
 `npm audit` reports 3 high-severity issues, all one path: `prisma` → `@prisma/config` → `deepmerge-ts`. The only offered fix is Prisma 7, which doesn't support MongoDB. The problem is stack exhaustion when merging recursive objects, in Prisma's own configuration tooling, which handles no visitor input. It's accepted for now, and should be rechecked at each Prisma release. The remaining reports are moderate.
+
+## Never run `prisma db push` alone
+
+Search needs text indexes that only `npm run db:indexes` creates, and `prisma db push` deletes them. Without them, every search fails with an unexpected error. Use `npm run db:sync`, which does both.

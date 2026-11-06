@@ -63,7 +63,7 @@ export function useFeedPlayerPool({ mountsRef, active, upcoming, isInView, place
     isMuted,
     isSoundLocked,
     leavingKey,
-    beginWithSound: useCallback(() => poolRef.current?.beginWithSound(), []),
+    unlockSound: useCallback(() => poolRef.current?.unlockSound(), []),
     toggleSound: useCallback(() => poolRef.current?.toggleSound(), []),
     togglePlay: useCallback(() => poolRef.current?.togglePlay(), []),
     reposition: useCallback(() => poolRef.current?.reposition(), []),

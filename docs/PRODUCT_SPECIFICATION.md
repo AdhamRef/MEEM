@@ -47,10 +47,10 @@ Transparent, category-based scoring, with weights set in the dashboard: chosen i
 | Posting YouTube comments | Read-only, labelled as YouTube's | Posting would need YouTube authorisation, which isn't requested (L6) |
 | Resume in YouTube playlists | Best effort, from what was seen playing here | Progress is only visible while playing on this site (L7) |
 | Explore should "avoid a cluttered page with endless unrelated cards" (§16) | Explore is a video-site-style page that keeps loading as people scroll. All the editorial sections §16 lists are still there, as shelves between the videos. Likes, internal comments, and follows stay out (§29). | The owner's decision of 2026-11-06, because Explore showed too few videos |
-| Sound starts muted (L3) | The feed opens on a one-tap welcome screen where a browser would refuse sound, so the first video is heard from its start | The owner's decision of 2026-11-06 |
+| Sound starts muted (L3) | Sound is the default. Browsers still require a first touch, so the first video starts silently with a small hint, and any first touch, including a swipe, brings sound. No start button. | The owner's decision of 2026-11-06. A website can't go further than this. |
 | `/c/` channel addresses | Asks for the `@handle` | The API has no direct lookup, and search costs 100 quota units (L8) |
 | A `Short` model | One `Video` model with a kind | Playlists and topics need both kinds, and duplicates are prevented across them (D3) |
-| Statistics | Built, and off | YouTube limits storing them, until the audit says otherwise (D6, R2) |
+| Statistics | Built, and on: likes, views, and comment counts, stored and static | The owner's decision of 2026-11-06, changing D6. YouTube limits storing them, so this must be reviewed before the audit (R2). |
 | "Popular" | Only real use of this site, labelled, and hidden until there's enough | Nothing may be invented, and it must be clear it's not from YouTube (R6) |
 | Auth.js v5 style naming | `next-auth` 4 | v5 is still in beta (D1) |
 

@@ -40,7 +40,7 @@ export function StatTile({ label, value, hint, testId, tone }: { label: string; 
       <dd className={cn("mt-1 truncate text-xl font-semibold tabular-nums", tone === "alert" && "text-destructive")} data-testid={testId}>
         {value}
       </dd>
-      {hint ? <p className="mt-0.5 text-xs text-text-secondary">{hint}</p> : null}
+      {hint ? <dd className="mt-0.5 text-xs text-text-secondary">{hint}</dd> : null}
     </div>
   );
 }

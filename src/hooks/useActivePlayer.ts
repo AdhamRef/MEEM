@@ -24,6 +24,8 @@ interface ActivePlayerOptions {
    */
   holdUntilFirstFrame?: boolean;
   strategy: "reuse" | "recreate";
+  /** Asks for sound on autoplay where the browser could allow it, and falls back to muted where it doesn't. */
+  startWithSound?: boolean;
   onWatchFinished?: (videoId: string, watch: Omit<WatchSummary, "durationSeconds">) => void;
 }
 
@@ -44,7 +46,7 @@ const FIRST_FRAME_GIVE_UP_MS = 2500;
  * Manages the one YouTube player a page may have. Autoplay always starts muted. Sound comes
  * only from a person's action, and the player's own controls and end screen stay untouched.
  */
-export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strategy, onWatchFinished, showControls = true, loopOnEnd = false, holdUntilFirstFrame = false }: ActivePlayerOptions) {
+export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strategy, onWatchFinished, showControls = true, loopOnEnd = false, holdUntilFirstFrame = false, startWithSound = false }: ActivePlayerOptions) {
   // Tagged with its video, so moving on shows "loading" rather than the last video's state.
   const [playback, setPlayback] = useState<{ videoId: string | null; state: PlaybackState; errorCode: number | null }>({ videoId: null, state: "idle", errorCode: null });
   const playbackStateRef = useRef<PlaybackState>("idle");
@@ -183,6 +185,8 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
 
         const element = document.createElement("div");
         mount.replaceChildren(element);
+        const asksForSound = startWithSound && navigator.userActivation?.hasBeenActive === true;
+        if (asksForSound) wantsSoundRef.current = true;
 
         playerRef.current = new youtube.Player(element, {
           videoId,
@@ -190,7 +194,7 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
           height: "100%",
           playerVars: {
             autoplay: autoplay ? 1 : 0,
-            mute: autoplay ? 1 : 0,
+            mute: autoplay && !asksForSound ? 1 : 0,
             playsinline: 1,
             controls: showControls ? 1 : 0,
             enablejsapi: 1,
@@ -238,7 +242,15 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
               stopWaiting();
               setPlayback({ videoId: trackerRef.current?.videoId ?? null, state: "error", errorCode: data ?? null });
             },
-            onAutoplayBlocked: () => {
+            onAutoplayBlocked: ({ target }) => {
+              // Refused only because of the sound, so the video still runs, and the button can turn it on.
+              if (asksForSound && !target.isMuted()) {
+                wantsSoundRef.current = false;
+                target.mute();
+                target.playVideo();
+                setIsMuted(true);
+                return;
+              }
               stopWaiting();
               setPlayback({ videoId: trackerRef.current?.videoId ?? null, state: "blocked", errorCode: null });
             },
@@ -253,7 +265,7 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
     return () => {
       isCancelled = true;
     };
-  }, [videoId, autoplay, strategy, showControls, loopOnEnd, holdUntilFirstFrame, destroyPlayer, finishWatch, startTracking, stopWaiting, waitForFirstFrame, mountRef]);
+  }, [videoId, autoplay, strategy, showControls, loopOnEnd, holdUntilFirstFrame, startWithSound, destroyPlayer, finishWatch, startTracking, stopWaiting, waitForFirstFrame, mountRef]);
 
   // Pauses once less than half the player is visible, and resumes only a pause made here.
   useEffect(() => {

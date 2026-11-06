@@ -8,7 +8,10 @@ export const YOUTUBE_SETTINGS_KEY = "youtube.settings";
 export const MAX_DATA_AGE_DAYS = 30;
 
 export const youtubeSettingsSchema = z.strictObject({
-  /** Off until the compliance audit confirms storing statistics is allowed (decision D6). */
+  /**
+   * OWNER'S DECISION, 2026-11-06, changing decision D6: on, so likes and comment counts show. YouTube
+   * limits storing statistics, so this must be reviewed before the API Compliance Audit.
+   */
   statisticsEnabled: z.boolean(),
   /** Below the 30-day limit, so a missed run or two still leaves time to refresh. */
   refreshAfterDays: z.number().int().min(1).max(MAX_DATA_AGE_DAYS - 1),
@@ -20,7 +23,7 @@ export const youtubeSettingsSchema = z.strictObject({
 export type YouTubeSettings = z.infer<typeof youtubeSettingsSchema>;
 
 export const DEFAULT_YOUTUBE_SETTINGS: YouTubeSettings = {
-  statisticsEnabled: false,
+  statisticsEnabled: true,
   refreshAfterDays: 25,
   maxShortSeconds: 180,
   refreshBatchesPerRun: 20,

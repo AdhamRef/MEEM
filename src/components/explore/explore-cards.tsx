@@ -1,10 +1,10 @@
 /* eslint-disable @next/next/no-img-element -- Thumbnails load directly from YouTube by design, and aren't re-processed or re-hosted. */
-import { Tv } from "lucide-react";
+import { MessageCircle, ThumbsUp, Tv } from "lucide-react";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { strings } from "@/config/strings.ar";
 import type { VideoCard } from "@/features/shorts/types";
-import { formatDuration, formatTimeAgo } from "@/lib/format/video-time";
+import { formatCount, formatDuration, formatTimeAgo } from "@/lib/format/video-time";
 import { cn } from "@/lib/utils";
 import { VideoCardMenu } from "./video-card-menu";
 
@@ -18,6 +18,27 @@ function ChannelAvatar({ video }: { video: VideoCard }) {
     <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-text-secondary">
       <Tv className="size-4" strokeWidth={1.5} />
     </span>
+  );
+}
+
+/** Stored counts from YouTube, so reading them costs nothing. Nothing shows for a count YouTube doesn't give. */
+function VideoEngagement({ video }: { video: VideoCard }) {
+  if (video.likeCount === null && video.commentCount === null) return null;
+  return (
+    <p className="mt-0.5 flex items-center gap-3 text-xs text-text-secondary" data-testid="video-engagement">
+      {video.likeCount !== null ? (
+        <span className="inline-flex items-center gap-1" aria-label={`${video.likeCount} ${strings.feed.likes}`}>
+          <ThumbsUp aria-hidden className="size-3.5" />
+          <bdi>{formatCount(video.likeCount)}</bdi>
+        </span>
+      ) : null}
+      {video.commentCount !== null ? (
+        <span className="inline-flex items-center gap-1" aria-label={`${video.commentCount} ${strings.feed.commentsCount}`}>
+          <MessageCircle aria-hidden className="size-3.5" />
+          <bdi>{formatCount(video.commentCount)}</bdi>
+        </span>
+      ) : null}
+    </p>
   );
 }
 
@@ -61,13 +82,14 @@ export function ExploreVideoCard({ video, now, isInShelf = false }: { video: Vid
             <p className="truncate text-xs text-text-secondary" suppressHydrationWarning>
               {video.viewCount !== null ? (
                 <>
-                  <bdi>{video.viewCount.toLocaleString("ar")}</bdi> {strings.feed.views}
+                  <bdi>{formatCount(video.viewCount)}</bdi> {strings.feed.views}
                   {uploaded ? " · " : ""}
                 </>
               ) : null}
               {uploaded}
             </p>
           ) : null}
+          <VideoEngagement video={video} />
         </div>
         <VideoCardMenu video={video} />
       </div>
@@ -99,6 +121,7 @@ export function ExploreShortCard({ video }: { video: VideoCard }) {
         ) : null}
         {strings.feed.source}
       </p>
+      <VideoEngagement video={video} />
     </article>
   );
 }

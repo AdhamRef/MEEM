@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { strings } from "@/config/strings.ar";
-import type { RefreshReport, YouTubeStatus } from "@/features/youtube/metadata-refresh.service";
+import type { RefreshReport, StatisticsBackfillReport, YouTubeStatus } from "@/features/youtube/metadata-refresh.service";
 
 function reportMessage(report: RefreshReport): string {
   if (report.stoppedBy === "QUOTA_EXCEEDED") return strings.admin.refreshStoppedQuota;
@@ -24,6 +24,24 @@ export function YouTubeRefreshPanel({ status }: { status: YouTubeStatus }) {
       const response = await fetch("/api/admin/youtube/refresh", { method: "POST" });
       if (!response.ok) throw new Error("Refresh failed");
       setMessage(reportMessage((await response.json()) as RefreshReport));
+      router.refresh();
+    } catch {
+      setMessage(strings.admin.refreshFailed);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const backfillStatistics = async () => {
+    setIsBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/admin/youtube/backfill-statistics", { method: "POST" });
+      if (!response.ok) throw new Error("Backfill failed");
+      const report = (await response.json()) as StatisticsBackfillReport;
+      if (report.stoppedBy === "QUOTA_EXCEEDED") setMessage(strings.admin.refreshStoppedQuota);
+      else if (report.stoppedBy === "API_ERROR") setMessage(strings.admin.refreshStoppedError);
+      else setMessage(strings.admin.backfillStatsDone(report.updated, report.remaining));
       router.refresh();
     } catch {
       setMessage(strings.admin.refreshFailed);
@@ -56,9 +74,15 @@ export function YouTubeRefreshPanel({ status }: { status: YouTubeStatus }) {
 
       {explanation ? <p className="text-sm text-text-secondary">{explanation}</p> : null}
 
-      <Button onClick={refresh} disabled={isBusy || !status.isConfigured || status.quotaExhausted}>
-        {isBusy ? strings.admin.refreshing : strings.admin.refreshNow}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={refresh} disabled={isBusy || !status.isConfigured || status.quotaExhausted}>
+          {isBusy ? strings.admin.refreshing : strings.admin.refreshNow}
+        </Button>
+        <Button variant="secondary" onClick={backfillStatistics} disabled={isBusy || !status.isConfigured || status.quotaExhausted} data-testid="backfill-statistics">
+          {strings.admin.backfillStats}
+        </Button>
+      </div>
+      <p className="text-xs text-text-secondary">{strings.admin.backfillStatsHint}</p>
 
       <p role="status" className="min-h-5 text-sm text-text-secondary">
         {message}

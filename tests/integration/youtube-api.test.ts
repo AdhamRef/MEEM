@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getVideoComments } from "@/features/youtube/comments.service";
-import { getYouTubeStatus, runMetadataRefresh, runMetadataRefreshAs } from "@/features/youtube/metadata-refresh.service";
+import { backfillVideoStatistics, getYouTubeStatus, runMetadataRefresh, runMetadataRefreshAs } from "@/features/youtube/metadata-refresh.service";
 import { YOUTUBE_SETTINGS_KEY } from "@/features/youtube/settings.service";
 import { importVideos, importVideosByInput } from "@/features/youtube/video-import.service";
 import { AppError } from "@/lib/errors";
@@ -207,10 +207,30 @@ describe("importing videos", () => {
     expect((await prisma.apiQuotaUsage.findUniqueOrThrow({ where: { day: pacificDay() } })).units).toBe(3);
   }, 180_000);
 
-  it("stores no statistics by default, even if YouTube sends them", async () => {
+  it("stores statistics by default, from the same request", async () => {
+    respondWithVideos([ID_1], { [ID_1]: { statistics: { viewCount: "500", likeCount: "20", commentCount: "3" } } });
+    await importVideosByInput([ID_1]);
+    expect((await prisma.video.findUniqueOrThrow({ where: { youtubeVideoId: ID_1 } })).stats).toMatchObject({ viewCount: 500n, likeCount: 20n, commentCount: 3n });
+  });
+
+  it("stores none when they're turned off, even if YouTube sends them", async () => {
+    await prisma.applicationSetting.create({ data: { key: YOUTUBE_SETTINGS_KEY, value: { statisticsEnabled: false, refreshAfterDays: 25, maxShortSeconds: 180, refreshBatchesPerRun: 20 } } });
     respondWithVideos([ID_1], { [ID_1]: { statistics: { viewCount: "500" } } });
     await importVideosByInput([ID_1]);
     expect((await prisma.video.findUniqueOrThrow({ where: { youtubeVideoId: ID_1 } })).stats).toBeNull();
+  });
+
+  it("fills in statistics for videos stored without them, once each, and counts the quota", async () => {
+    await prisma.video.create({ data: { youtubeVideoId: ID_1, kind: "SHORT", classification: "SHORT_CANDIDATE", status: "PUBLISHED", availability: "AVAILABLE", title: "قديم", feedKey: 1, metadataFetchedAt: new Date() } });
+    respondWithVideos([ID_1], { [ID_1]: { statistics: { likeCount: "77", commentCount: "5" } } });
+
+    expect(await backfillVideoStatistics(5)).toMatchObject({ updated: 1, remaining: 0 });
+    expect((await prisma.video.findUniqueOrThrow({ where: { youtubeVideoId: ID_1 } })).stats).toMatchObject({ likeCount: 77n, commentCount: 5n });
+
+    // Nothing is left to ask about, so running it again spends nothing.
+    fetchMock.mockClear();
+    expect(await backfillVideoStatistics(5)).toMatchObject({ updated: 0, remaining: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("stores real statistics once enabled", async () => {

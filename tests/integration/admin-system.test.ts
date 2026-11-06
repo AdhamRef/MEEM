@@ -310,10 +310,10 @@ describe("settings", () => {
     expect(await codeOf(updateYouTubeSettings(superAdmin, { maxShortSeconds: 60, refreshAfterDays: 30, refreshBatchesPerRun: 5 }))).toBe("VALIDATION");
   });
 
-  it("can't turn statistics on from the settings screen", async () => {
+  it("can't change statistics from the settings screen", async () => {
     expect(await codeOf(updateYouTubeSettings(superAdmin, { maxShortSeconds: 60, refreshAfterDays: 20, refreshBatchesPerRun: 5, statisticsEnabled: true }))).toBe("VALIDATION");
     await updateYouTubeSettings(superAdmin, { maxShortSeconds: 60, refreshAfterDays: 20, refreshBatchesPerRun: 5 });
-    expect((await getYouTubeSettings()).statisticsEnabled).toBe(false);
+    expect((await getYouTubeSettings()).statisticsEnabled).toBe(true);
   });
 });
 
@@ -326,7 +326,7 @@ describe("the integration status", () => {
     const status = await getIntegrationStatus(admin);
     expect(status.refresh).toMatchObject({ videosDue: 1, videosPastLimit: 1 });
     expect(status.quota.recentDays).toEqual([{ day: "2026-01-01", units: 42, exhausted: false }]);
-    expect(status.statisticsEnabled).toBe(false);
+    expect(status.statisticsEnabled).toBe(true);
     expect(await prisma.apiQuotaUsage.count()).toBe(1);
     expect(await codeOf(getIntegrationStatus(editor))).toBe("FORBIDDEN");
   });

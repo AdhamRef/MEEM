@@ -28,7 +28,8 @@
     "verify": "npm run db:validate && npm run typecheck && npm run lint && npm run test && npm run build",
     "postinstall": "prisma generate",
     "check:bundle": "tsx scripts/maintenance/scan-client-bundle.ts",
-    "youtube:backfill-shapes": "tsx scripts/youtube/backfill-video-shapes.ts"
+    "youtube:backfill-shapes": "tsx scripts/youtube/backfill-video-shapes.ts",
+    "youtube:backfill-stats": "tsx scripts/youtube/backfill-video-statistics.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1161.0",

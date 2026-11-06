@@ -102,7 +102,7 @@ describe("the feed", () => {
     const expected = new Set<string>();
     for (let index = 0; index < 20; index += 1) expected.add((await video(id, { feedKey: index * 10 })).id);
 
-    const cursor = encodeFeedCursor({ s: 95, n: 0, p: {}, d: [] });
+    const cursor = encodeFeedCursor({ s: 95, n: 0, o: {}, r: [] });
     const pages = await readWholeFeed(null, { cursor });
     const ids = pages.flatMap((page) => page.items.map((item) => item.id));
     expect(new Set(ids).size).toBe(ids.length);
@@ -210,17 +210,71 @@ describe("the feed", () => {
     expect(await errorCodeOf(getFeedPage(null, { cursor: "garbage!" }))).toBe("VALIDATION");
   });
 
-  it("avoids runs of one channel when others are available", async () => {
-    const { id } = await category("أ");
-    const channels = await Promise.all(["1", "2"].map((n) => prisma.youTubeChannel.create({ data: { youtubeChannelId: `UC${n}`, title: n } })));
-    for (let index = 0; index < 8; index += 1) await video(id, { channelId: channels[index % 2]!.id, feedKey: index < 4 ? index : index + 100 });
-
-    const { items } = await getFeedPage(null, { cursor: encodeFeedCursor({ s: 0, n: 0, p: {}, d: [] }) }, 8);
+  async function channelsOf(items: { id: string }[]) {
     const rows = await prisma.video.findMany({ where: { id: { in: items.map((item) => item.id) } }, select: { id: true, channelId: true } });
     const channelOf = new Map(rows.map((row) => [row.id, row.channelId]));
-    for (let index = 1; index < items.length; index += 1) {
-      expect(channelOf.get(items[index]!.id)).not.toBe(channelOf.get(items[index - 1]!.id));
+    return items.map((item) => channelOf.get(item.id)!);
+  }
+
+  const createChannels = (count: number) => Promise.all(Array.from({ length: count }, (_, n) => prisma.youTubeChannel.create({ data: { youtubeChannelId: `UC${n}`, title: String(n) } })));
+
+  it("avoids runs of one channel when others are available", async () => {
+    const { id } = await category("أ");
+    const channels = await createChannels(2);
+    for (let index = 0; index < 8; index += 1) await video(id, { channelId: channels[index % 2]!.id, feedKey: index < 4 ? index : index + 100 });
+
+    const { items } = await getFeedPage(null, { cursor: encodeFeedCursor({ s: 0, n: 0, o: {}, r: [] }) }, 8);
+    const channelIds = await channelsOf(items);
+    for (let index = 1; index < channelIds.length; index += 1) expect(channelIds[index]).not.toBe(channelIds[index - 1]);
+  });
+
+  it("keeps a channel with most of the videos from dominating, across pages, and still shows everything once", async () => {
+    const { id } = await category("أ");
+    const channels = await createChannels(8);
+    const expected = new Set<string>();
+    // One channel has 40 videos with neighbouring feed keys, and seven others have 4 each.
+    for (let index = 0; index < 40; index += 1) expected.add((await video(id, { channelId: channels[0]!.id, feedKey: index })).id);
+    for (const channel of channels.slice(1)) for (let index = 0; index < 4; index += 1) expected.add((await video(id, { channelId: channel.id, feedKey: 1000 + index })).id);
+
+    const pages = await readWholeFeed(null, { cursor: encodeFeedCursor({ s: 0, n: 0, o: {}, r: [] }) });
+    const ids = pages.flatMap((page) => page.items.map((item) => item.id));
+    expect(new Set(ids)).toEqual(expected);
+    expect(ids).toHaveLength(expected.size);
+
+    // While others remain, it stays spaced: the first 24 can't include a repeat within 6.
+    const channelIds = await channelsOf(ids.slice(0, 24).map((item) => ({ id: item })));
+    for (let index = 0; index < channelIds.length; index += 1) expect(channelIds.slice(Math.max(0, index - 6), index)).not.toContain(channelIds[index]);
+  });
+
+  it("answers what happened this visit, on the next page", async () => {
+    const [liked, other, skipped] = await Promise.all([category("أ"), category("ب"), category("ج")]);
+    const channels = await createChannels(9);
+    for (const [offset, cat] of [liked, other, skipped].entries()) {
+      for (let index = 0; index < 12; index += 1) await video(cat.id, { channelId: channels[offset * 3 + (index % 3)]!.id });
     }
+    const countIn = (items: { category: { id: string } | null }[], id: string) => items.filter((item) => item.category?.id === id).length;
+
+    const { items } = await getFeedPage(null, { session: { categories: { [liked.id]: 3, [skipped.id]: -3 }, channels: {} } }, 8);
+    // Its share is limited, so a burst of activity can't turn the feed into one topic.
+    expect(countIn(items, liked.id)).toBe(6);
+    expect(countIn(items, skipped.id)).toBeLessThanOrEqual(1);
+  });
+
+  it("rejects bad session hints and limits large ones", async () => {
+    const { id } = await category("أ");
+    await video(id);
+    expect(await errorCodeOf(getFeedPage(null, { session: { categories: { nope: 1 }, channels: {} } }))).toBe("VALIDATION");
+    expect(await errorCodeOf(getFeedPage(null, { session: { categories: {}, channels: { [id]: Number.NaN } } }))).toBe("VALIDATION");
+    expect(await errorCodeOf(getFeedPage(null, { session: { categories: { [id]: 1e308 }, channels: {} } }))).toBeUndefined();
+  });
+
+  it("starts a new round rather than let a very long session's cursor outgrow a URL", async () => {
+    const { id } = await category("أ");
+    await video(id);
+    await video(id);
+    const huge = Object.fromEntries(Array.from({ length: 450 }, (_, index) => [index.toString(16).padStart(16, "0"), 1]));
+    const { nextCursor } = await getFeedPage(null, { cursor: encodeFeedCursor({ s: 0, n: 0, o: huge, r: [] }) }, 1);
+    expect(nextCursor!.length).toBeLessThan(8000);
   });
 });
 

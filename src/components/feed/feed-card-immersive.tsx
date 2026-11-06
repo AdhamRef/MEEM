@@ -32,7 +32,7 @@ function RailAction({ label, children }: { label?: string; children: ReactNode }
  * own interface stays out of sight and swiping works. See FEED_IMMERSIVE_OVERLAY.
  */
 export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function ImmersiveFeedCard(
-  { video, isActive, isUpcoming, isNext, playback, errorCode, isMuted, isSaved, notice, hasPrevious, hasNext, onToggleSound, onTapVideo, onPrevious, onNext, onSavedChange, onNotice, slotRef },
+  { video, isActive, isUpcoming, isNext, playback, errorCode, isMuted, isSoundLocked = false, isSaved, notice, hasPrevious, hasNext, onToggleSound, onTapVideo, onPrevious, onNext, onSavedChange, onNotice, slotRef },
   ref,
 ) {
   const message = isActive ? (statusMessage(playback, errorCode) ?? notice) : null;
@@ -42,8 +42,8 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
   const isWide = ratio > 1;
   // The thumbnail stays until the first frame, so nobody sees a loading player.
   const showPoster = !isActive || (playback !== "playing" && playback !== "paused");
-  // Already on the next card as a swipe reveals it, and gone the moment the video runs.
-  const showLoader = isActive ? playback === "loading" || playback === "idle" : isNext;
+  // Only on the card that's waiting, and its styles keep it out of sight unless the wait gets long.
+  const showLoader = isActive && (playback === "loading" || playback === "idle");
 
   return (
     <article
@@ -77,7 +77,7 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
               // Above the player, at the video's own size. YouTube's thumbnails have bars around a
               // vertical video, which cropping to its shape removes. It fades only on the way out:
               // fading in would show black on the card being swiped away, once the player has left it.
-              className={cn("absolute inset-0 z-20 m-auto aspect-(--r) w-[min(100%,calc(100cqh*var(--r)))] object-cover", showPoster ? "opacity-100" : "pointer-events-none opacity-0 transition-opacity duration-150")}
+              className={cn("absolute inset-0 z-20 m-auto aspect-(--r) w-[min(100%,calc(100cqh*var(--r)))] object-cover", (isActive || isNext) && showPoster && "feed-poster-drift", showPoster ? "opacity-100" : "pointer-events-none opacity-0 transition-opacity duration-150")}
             />
           ) : showPoster ? (
             <div aria-hidden className="absolute inset-0 z-20 bg-black" />
@@ -94,7 +94,7 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
           className="absolute inset-0 z-20 flex items-center justify-center outline-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset"
         >
           {showLoader ? (
-            <span aria-hidden className="absolute flex size-20 items-center justify-center rounded-full bg-black/60" data-testid="video-loader">
+            <span aria-hidden className="feed-loader-late absolute flex size-20 items-center justify-center rounded-full bg-black/60" data-testid="video-loader">
               <span className="feed-loader-ring absolute inset-0 rounded-full" />
               <BrandMark className="feed-loader-logo size-12" />
             </span>
@@ -105,6 +105,15 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
             </span>
           ) : null}
         </button>
+
+        {isActive && isSoundLocked ? (
+          <p className="pointer-events-none absolute inset-x-0 top-[calc(var(--feed-tabs-height)+0.75rem)] z-30 flex justify-center" data-testid="sound-hint">
+            <span className="feed-pop flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs font-medium backdrop-blur-sm">
+              <VolumeX aria-hidden className="size-4" />
+              {strings.feed.tapForSound}
+            </span>
+          </p>
+        ) : null}
 
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col gap-1.5 bg-linear-to-t from-black/75 to-transparent ps-3 pe-16 pt-16 pb-3 md:pe-3" data-testid="feed-caption">
           <div className="flex min-w-0 items-center gap-2">

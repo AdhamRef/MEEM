@@ -27,9 +27,29 @@ export const FEED_ACTIVE_THRESHOLD = FEED_IMMERSIVE_OVERLAY ? 0.15 : 0.6;
 export const FEED_PAUSE_THRESHOLD = 0.5;
 /** Fetches the next page while this many cards are still ahead. */
 export const FEED_LOAD_AHEAD = 6;
+/** Thumbnails loaded ahead of the active card, which is further than players are buffered. */
+export const FEED_PRELOAD_THUMBNAILS = 6;
+
 /**
- * Thumbnails loaded ahead of the active card. Players aren't, because measuring the real player
- * showed no gain: YouTube downloads nothing until playback starts, a prepared player started
- * in 1.1 to 3.2 seconds against 0.9 to 1.4 for the reused one, and each costs a whole iframe.
+ * OWNER'S DECISION, 2026-11-06, made knowing it breaks YouTube's rules: real players stay buffered
+ * on this many coming cards, so a swipe starts the next video in about 0.3 seconds rather than 1 to
+ * 1.8. To buffer, each plays muted out of sight until its first frame. That may trigger hidden ads
+ * or count as artificial playback, adds to the risk to API access, and won't pass the API
+ * Compliance Audit. The pool also starts the feed with sound whenever the browser allows it. Zero
+ * restores one player per page and muted autoplay, and this line is the only thing to change.
  */
-export const FEED_PRELOAD_THUMBNAILS = 5;
+export const FEED_BUFFER_AHEAD: number = FEED_IMMERSIVE_OVERLAY ? 4 : 0;
+
+interface DeviceHints {
+  deviceMemory?: number;
+  connection?: { saveData?: boolean };
+}
+
+/** Each player is a whole iframe, so small phones keep fewer, and data saver is respected. */
+export function feedBufferAheadForDevice(): number {
+  if (FEED_BUFFER_AHEAD === 0) return 0;
+  const { deviceMemory, connection } = navigator as Navigator & DeviceHints;
+  if (connection?.saveData) return 1;
+  if (deviceMemory !== undefined && deviceMemory <= 4) return Math.min(FEED_BUFFER_AHEAD, 3);
+  return FEED_BUFFER_AHEAD;
+}

@@ -5,11 +5,15 @@ export { expect };
 /**
  * Stands in for YouTube's script. It follows the documented API, including that methods only
  * work after onReady, and records every call. A real iframe element is created, so tests can
- * check what's in front of it and how many exist. This proves how the application behaves,
- * and says nothing about real autoplay, sound, or gestures, which need real phones.
+ * check what's in front of it and how many exist. Sound follows what was measured on the real
+ * player without a click or key press: playing unmuted fires onAutoplayBlocked and doesn't start,
+ * and unmuting a running video pauses it. This proves how the application behaves, and says
+ * nothing about real autoplay, sound, or gestures, which need real phones.
  */
 const FAKE_IFRAME_API = `
 (() => {
+  window.__ytActivated = false;
+  for (const name of ["click", "keydown"]) window.addEventListener(name, () => { window.__ytActivated = true; }, true);
   window.__ytPlayers = [];
   window.__ytCalls = [];
   window.__ytOptions = [];
@@ -23,6 +27,7 @@ const FAKE_IFRAME_API = `
     frame.style.cssText = "width:100%;height:100%;border:0;display:block";
     element.replaceWith(frame);
     let ready = false, muted = Boolean(options.playerVars.mute), time = 0;
+    self.__frame = frame;
     const record = (name, arg) => window.__ytCalls.push({ name, arg, videoId: frame.dataset.videoId });
     const guarded = (name, fn) => (...args) => {
       if (!ready) throw new TypeError("player." + name + " is not a function");
@@ -36,10 +41,16 @@ const FAKE_IFRAME_API = `
       if (state === 1) clock = setInterval(() => { if (!window.__ytHoldFirstFrame) time += 0.1; }, 100);
       options.events.onStateChange({ target: self, data: state });
     };
-    self.playVideo = guarded("playVideo", () => fire(1));
+    self.playVideo = guarded("playVideo", () => {
+      if (!muted && !window.__ytActivated) { options.events.onAutoplayBlocked({ target: self }); return; }
+      fire(1);
+    });
     self.pauseVideo = guarded("pauseVideo", () => fire(2));
     self.mute = guarded("mute", () => { muted = true; });
-    self.unMute = guarded("unMute", () => { muted = false; });
+    self.unMute = guarded("unMute", () => {
+      muted = false;
+      if (!window.__ytActivated) setTimeout(() => fire(2), 20);
+    });
     self.isMuted = () => muted;
     self.getCurrentTime = () => time;
     let duration = 600;

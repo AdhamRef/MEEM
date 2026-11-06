@@ -16,13 +16,15 @@ import { youtubeWatchUrl } from "@/lib/youtube/ids";
 export interface FeedCardProps {
   video: VideoCard;
   isActive: boolean;
-  /** Cards coming up load their thumbnails ahead of time. No player is created for them. */
+  /** Cards coming up load their thumbnails ahead of time. */
   isUpcoming: boolean;
   /** The card a swipe reveals next, or the first card before anything is active. */
   isNext: boolean;
   playback: PlaybackState;
   errorCode: number | null;
   isMuted: boolean;
+  /** Sound is wanted, but the browser won't allow it until the person touches the page. */
+  isSoundLocked?: boolean;
   isSaved: boolean;
   notice: string | null;
   hasPrevious: boolean;

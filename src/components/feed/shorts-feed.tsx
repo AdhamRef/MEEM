@@ -1,21 +1,24 @@
 "use client";
 
-import { Clapperboard, RotateCw, Sparkles, TriangleAlert } from "lucide-react";
+import { Clapperboard, RotateCw, TriangleAlert } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { OnboardingPrompt } from "@/components/preferences/onboarding-prompt";
 import { usePreferences } from "@/components/preferences/preferences-provider";
 import { StateMessage } from "@/components/shared/state-message";
 import { Button } from "@/components/ui/button";
 import { preconnect } from "react-dom";
-import { FEED_ACTIVE_THRESHOLD, FEED_CROP_PIXELS, FEED_IMMERSIVE_OVERLAY, FEED_LOAD_AHEAD, FEED_PAUSE_THRESHOLD, FEED_PLAYER_STRATEGY, FEED_PRELOAD_THUMBNAILS } from "@/config/feed";
+import { FEED_ACTIVE_THRESHOLD, FEED_BUFFER_AHEAD, FEED_CROP_PIXELS, FEED_IMMERSIVE_OVERLAY, FEED_LOAD_AHEAD, FEED_PAUSE_THRESHOLD, FEED_PLAYER_STRATEGY, FEED_PRELOAD_THUMBNAILS } from "@/config/feed";
 import { AccountMenu } from "@/components/layout/account-menu";
 import { strings } from "@/config/strings.ar";
 import { readGuestBehaviour, recordGuestSignal } from "@/features/recommendations/guest-signals";
 import { sendView } from "@/components/knowledge/view-recorder";
+import { addSessionMomentum, emptySessionMomentum, sessionMomentumParams } from "@/features/recommendations/session-momentum";
 import { signalFromWatch } from "@/features/recommendations/watch-rules";
 import type { VideoCard } from "@/features/shorts/types";
 import { useActivePlayer } from "@/hooks/useActivePlayer";
+import { useFeedPlayerPool } from "@/hooks/useFeedPlayerPool";
+import type { PoolEvents, PoolTarget } from "@/lib/youtube/feed-player-pool";
 import { loadYouTubeIframeApi } from "@/lib/youtube/iframe-api";
 import { cn } from "@/lib/utils";
 import { FeedCard, feedVideoRatio } from "./feed-card";
@@ -35,6 +38,46 @@ interface ShortsFeedProps {
   initialVideo?: VideoCard;
   showOnboarding?: boolean;
 }
+
+interface FeedPlayerOptions {
+  mountsRef: RefObject<(HTMLElement | null)[]>;
+  active: PoolTarget | null;
+  upcoming: PoolTarget[];
+  isInView: boolean;
+  place: PoolEvents["place"];
+  onWatchFinished: PoolEvents["onWatchFinished"];
+}
+
+/** The layout that follows YouTube's rules: one player, moved to the active card, starting muted. */
+function useSingleFeedPlayer({ mountsRef, active, isInView, place, onWatchFinished }: FeedPlayerOptions) {
+  const mountRef = useMemo<RefObject<HTMLElement | null>>(
+    () => ({
+      get current() {
+        return mountsRef.current[0] ?? null;
+      },
+      set current(_value) {},
+    }),
+    [mountsRef],
+  );
+  const player = useActivePlayer({
+    mountRef,
+    videoId: active?.videoId ?? null,
+    isInView,
+    autoplay: true,
+    strategy: FEED_PLAYER_STRATEGY,
+    showControls: false,
+    onWatchFinished: (videoId, watch) => onWatchFinished(videoId, { ...watch, timesEnded: watch.didEnd ? 1 : 0 }),
+  });
+  const reposition = useCallback(() => {
+    const mount = mountRef.current;
+    if (mount && active) place(mount, active.index);
+  }, [mountRef, active, place]);
+  useEffect(reposition, [reposition]);
+  return { ...player, isSoundLocked: false, reposition };
+}
+
+// Chosen once, so the same hook runs on every render. See FEED_BUFFER_AHEAD.
+const useFeedPlayer = FEED_BUFFER_AHEAD > 0 ? useFeedPlayerPool : useSingleFeedPlayer;
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -73,7 +116,11 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     return params.toString();
   }, [preferencesStatus, isGuest, selectedCategoryIds, selectedCategoryId]);
 
-  const { items, status, hasMore, loadMore, retry } = useFeedPages(query, selectedCategoryId ? undefined : initialVideo);
+  // What happened this session, sent with each page so the feed answers within a few swipes.
+  const momentumRef = useRef(emptySessionMomentum());
+  const getSessionParams = useCallback(() => sessionMomentumParams(momentumRef.current), []);
+
+  const { items, status, hasMore, loadMore, retry } = useFeedPages(query, selectedCategoryId ? undefined : initialVideo, getSessionParams);
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [isActiveInView, setIsActiveInView] = useState(false);
@@ -83,7 +130,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
   const [notice, setNotice] = useState<{ videoId: string; text: string } | null>(null);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const mountRef = useRef<HTMLDivElement>(null);
+  const mountsRef = useRef<(HTMLElement | null)[]>([]);
   const cardRefs = useRef(new Map<number, HTMLElement>());
   const slotRefs = useRef(new Map<number, HTMLElement>());
   const activeIndexRef = useRef<number | null>(null);
@@ -96,7 +143,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     activeIndexRef.current = activeIndex;
   });
 
-  // Preloading means the script and the next thumbnail. A hidden player is never created.
+  // Loads ahead of the first card, which saves that much of its wait.
   useEffect(() => {
     loadYouTubeIframeApi().catch(() => {
       // The player reports this itself if someone reaches a video.
@@ -105,7 +152,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
 
   const activeVideo = activeIndex === null ? null : (items[activeIndex] ?? null);
 
-  const handleWatchFinished = useCallback((youtubeVideoId: string, watch: { didStartPlaying: boolean; didEnd: boolean; watchedSeconds: number }) => {
+  const handleWatchFinished = useCallback<PoolEvents["onWatchFinished"]>((youtubeVideoId, { timesEnded, ...watch }) => {
     const video = itemsRef.current.find((item) => item.youtubeVideoId === youtubeVideoId);
     if (!video) return;
 
@@ -113,6 +160,8 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
 
     const signal = signalFromWatch({ ...watch, durationSeconds: video.durationSeconds });
     if (!signal) return;
+
+    momentumRef.current = addSessionMomentum(momentumRef.current, video, timesEnded >= 2 ? "replay" : signal);
 
     if (isGuestRef.current) {
       if (video.category) recordGuestSignal(window.localStorage, video.category.id, signal, new Date());
@@ -127,15 +176,48 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     }).catch(() => {});
   }, []);
 
-  const { state: playback, errorCode, isMuted, toggleSound, togglePlay } = useActivePlayer({
-    mountRef,
-    videoId: activeVideo?.youtubeVideoId ?? null,
+  const active = useMemo<PoolTarget | null>(() => (activeVideo && activeIndex !== null ? { key: `${activeVideo.id}:${activeIndex}`, index: activeIndex, videoId: activeVideo.youtubeVideoId } : null), [activeVideo, activeIndex]);
+  const upcoming = useMemo<PoolTarget[]>(() => {
+    if (activeIndex === null) return [];
+    return items.slice(activeIndex + 1, activeIndex + 1 + FEED_BUFFER_AHEAD).map((video, offset) => ({ key: `${video.id}:${activeIndex + 1 + offset}`, index: activeIndex + 1 + offset, videoId: video.youtubeVideoId }));
+  }, [items, activeIndex]);
+
+  // Keeps a player exactly over its card's slot, and within nothing else.
+  const place = useCallback<PoolEvents["place"]>((mount, index) => {
+    const scroller = scrollerRef.current;
+    const slot = slotRefs.current.get(index);
+    if (!scroller || !slot) {
+      mount.style.display = "none";
+      return;
+    }
+    // Measured on screen, since each card sizes its slot to its own video.
+    const slotBox = slot.getBoundingClientRect();
+    const scrollerBox = scroller.getBoundingClientRect();
+    mount.style.display = "block";
+    mount.style.top = `${slotBox.top - scrollerBox.top + scroller.scrollTop}px`;
+    mount.style.height = `${slotBox.height}px`;
+    mount.style.width = `${slotBox.width}px`;
+    mount.style.insetInlineStart = `${scrollerBox.right - slotBox.right}px`;
+
+    if (FEED_IMMERSIVE_OVERLAY) {
+      const video = itemsRef.current[index];
+      const ratio = video ? feedVideoRatio(video) : 9 / 16;
+      // The whole video always shows: as tall as fits, unless that would run past the sides.
+      const videoWidth = Math.min(slotBox.width, slotBox.height * ratio);
+      const videoHeight = videoWidth / ratio;
+      // Only the frame's height grows. The player keeps the video at this width, with the
+      // extra above and below it, which is where YouTube's bars land and get clipped.
+      mount.style.setProperty("--frame-w", `${videoWidth}px`);
+      mount.style.setProperty("--frame-h", `${videoHeight + 2 * FEED_CROP_PIXELS}px`);
+    }
+  }, []);
+
+  const { state: playback, errorCode, isMuted, isSoundLocked, toggleSound, togglePlay, reposition } = useFeedPlayer({
+    mountsRef,
+    active,
+    upcoming,
     isInView: isActiveInView,
-    autoplay: true,
-    strategy: FEED_PLAYER_STRATEGY,
-    showControls: false,
-    loopOnEnd: FEED_IMMERSIVE_OVERLAY,
-    holdUntilFirstFrame: FEED_IMMERSIVE_OVERLAY,
+    place,
     onWatchFinished: handleWatchFinished,
   });
 
@@ -206,45 +288,15 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     };
   }, []);
 
-  // Keeps the single player exactly over the active card's slot, and within nothing else.
+  // Layout changes move the cards, so the players follow.
   useEffect(() => {
-    const mount = mountRef.current;
     const scroller = scrollerRef.current;
-    if (!mount || !scroller) return;
-
-    const place = () => {
-      const slot = activeIndex === null ? undefined : slotRefs.current.get(activeIndex);
-      if (!slot) {
-        mount.style.display = "none";
-        return;
-      }
-      // Measured on screen, since each card sizes its slot to its own video.
-      const slotBox = slot.getBoundingClientRect();
-      const scrollerBox = scroller.getBoundingClientRect();
-      mount.style.display = "block";
-      mount.style.top = `${slotBox.top - scrollerBox.top + scroller.scrollTop}px`;
-      mount.style.height = `${slotBox.height}px`;
-      mount.style.width = `${slotBox.width}px`;
-      mount.style.insetInlineStart = `${scrollerBox.right - slotBox.right}px`;
-
-      if (FEED_IMMERSIVE_OVERLAY) {
-        const active = activeIndex === null ? undefined : itemsRef.current[activeIndex];
-        const ratio = active ? feedVideoRatio(active) : 9 / 16;
-        // The whole video always shows: as tall as fits, unless that would run past the sides.
-        const videoWidth = Math.min(slotBox.width, slotBox.height * ratio);
-        const videoHeight = videoWidth / ratio;
-        // Only the frame's height grows. The player keeps the video at this width, with the
-        // extra above and below it, which is where YouTube's bars land and get clipped.
-        mount.style.setProperty("--frame-w", `${videoWidth}px`);
-        mount.style.setProperty("--frame-h", `${videoHeight + 2 * FEED_CROP_PIXELS}px`);
-      }
-    };
-
-    place();
-    const observer = new ResizeObserver(place);
+    if (!scroller) return;
+    reposition();
+    const observer = new ResizeObserver(reposition);
     observer.observe(scroller);
     return () => observer.disconnect();
-  }, [activeIndex, items]);
+  }, [items, reposition]);
 
   useEffect(() => {
     if (activeIndex !== null && hasMore && activeIndex >= items.length - FEED_LOAD_AHEAD) loadMore();
@@ -353,8 +405,18 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
         data-testid="feed-scroller"
         className={cn("relative bg-black [container-type:size] snap-y snap-mandatory overflow-y-auto overscroll-contain", FEED_IMMERSIVE_OVERLAY ? "h-[calc(100dvh-var(--top-bar-height)-var(--bottom-nav-height)-env(safe-area-inset-bottom))] md:h-dvh" : "h-[calc(100dvh-var(--top-bar-height)-var(--feed-tabs-height)-var(--bottom-nav-height)-env(safe-area-inset-bottom))] md:h-[calc(100dvh-var(--feed-tabs-height))]")}
       >
-        {/* The one player. Positioned over the active slot, it never covers the panel, and nothing covers it. */}
-        <div ref={mountRef} data-testid="player-mount" data-immersive-player={FEED_IMMERSIVE_OVERLAY || undefined} className="absolute z-10 hidden overflow-hidden bg-black" />
+        {/* Each player sits over its own card's slot. Only the active card's is ever on screen. */}
+        {Array.from({ length: 1 + FEED_BUFFER_AHEAD }, (_, index) => (
+          <div
+            key={index}
+            ref={(element) => {
+              mountsRef.current[index] = element;
+            }}
+            data-testid="player-mount"
+            data-immersive-player={FEED_IMMERSIVE_OVERLAY || undefined}
+            className="absolute z-10 hidden overflow-hidden bg-black"
+          />
+        ))}
 
         {showOnboarding && !selectedCategoryId ? <OnboardingPrompt /> : null}
 
@@ -389,7 +451,8 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
 
         {items.map((video, index) => (
           <Card
-            key={video.id}
+            // A video can come round again once everything has been seen.
+            key={`${video.id}:${index}`}
             ref={(element) => {
               if (element) cardRefs.current.set(index, element);
               else cardRefs.current.delete(index);
@@ -405,6 +468,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
             playback={playback}
             errorCode={errorCode}
             isMuted={isMuted}
+            isSoundLocked={isSoundLocked}
             isSaved={savedIds.has(video.id)}
             notice={notice?.videoId === video.id ? notice.text : null}
             hasPrevious={index > 0}
@@ -415,6 +479,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
             onNext={() => goTo(index + 1)}
             onSavedChange={(isSaved) => {
               toggledSaveRef.current.add(video.id);
+              if (isSaved) momentumRef.current = addSessionMomentum(momentumRef.current, video, "save");
               setSavedIds((current) => {
                 const next = new Set(current);
                 if (isSaved) next.add(video.id);
@@ -440,12 +505,6 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
                 </Button>
               }
             />
-          </div>
-        ) : null}
-
-        {items.length > 0 && status === "ready" && !hasMore ? (
-          <div className={cn("flex h-full snap-start")} data-testid="feed-end">
-            <StateMessage icon={Sparkles} title={strings.feed.endTitle} description={strings.feed.endDescription} />
           </div>
         ) : null}
       </div>

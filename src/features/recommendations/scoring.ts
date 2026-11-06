@@ -6,6 +6,7 @@ import { z } from "zod";
  * so it can be explained.
  *
  *   score = selected interest weight + behaviour score (decayed over time)
+ *           + this visit's momentum, which is never stored
  *
  * The exploration share is applied by the feed when it allocates slots.
  */
@@ -22,6 +23,14 @@ export const scoringConfigSchema = z.strictObject({
   decayHalfLifeDays: z.number().positive().max(3650),
   /** The share of feed slots reserved for categories outside known interests (§9.4). */
   explorationShare: z.number().min(0).max(0.9),
+  /** How many other videos must pass before a channel returns, whenever another channel is available. */
+  channelSpacing: z.number().int().min(0).max(50).default(6),
+  /** The most of one page a single category can take, so no one topic takes over (§9.3). */
+  maxCategoryShare: z.number().min(0.1).max(1).default(0.75),
+  /** How strongly this visit's completions and skips move a category. Never stored. */
+  sessionMomentumWeight: z.number().min(0).max(20).default(4),
+  /** How much this visit's completions and skips change how often a channel is picked. Never stored. */
+  channelMomentumWeight: z.number().min(0).max(5).default(0.5),
 });
 
 export type ScoringConfig = z.infer<typeof scoringConfigSchema>;
@@ -33,6 +42,10 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
   maxBehaviourScore: 8,
   decayHalfLifeDays: 30,
   explorationShare: 0.2,
+  channelSpacing: 6,
+  maxCategoryShare: 0.75,
+  sessionMomentumWeight: 4,
+  channelMomentumWeight: 0.5,
 };
 
 export type RecommendationSignal = keyof ScoringConfig["signalWeights"];
@@ -90,4 +103,17 @@ export function rankCategories(categoryIds: string[], interests: CategoryInteres
     })
     .sort((a, b) => b.score.score - a.score.score || a.displayIndex - b.displayIndex)
     .map(({ score }) => score);
+}
+
+/** Adds this visit's momentum to each score and orders them again. Unknown categories are ignored. */
+export function applySessionMomentum(ranked: CategoryScore[], momentum: Record<string, number>, config: ScoringConfig): CategoryScore[] {
+  return ranked
+    .map((item, order) => ({ order, item: { ...item, score: item.score + (momentum[item.categoryId] ?? 0) * config.sessionMomentumWeight } }))
+    .sort((a, b) => b.item.score - a.item.score || a.order - b.order)
+    .map(({ item }) => item);
+}
+
+/** How likely a channel is to be picked this visit: more after completions, less after skips, never zero. */
+export function channelMomentumFactor(momentum: number, config: ScoringConfig): number {
+  return Math.max(0.2, 1 + momentum * config.channelMomentumWeight);
 }

@@ -21,11 +21,21 @@ Autoplay, swiping, and sound can't be tested by me, because emulators don't beha
 
 If you only have one kind of phone, send that one's results, and find the other when you can.
 
+Please also try the real feed on each phone, with a few videos published, and tell me:
+
+- [ ] Does swiping to the next video feel instant?
+- [ ] After your first tap, does the sound stay on as you swipe to the next videos? **iPhone may not allow this with several players.** If it doesn't, we'd need to choose between sound and buffering there.
+- [ ] Does the phone stay smooth and cool after a few minutes, with up to 5 players loaded?
+
 ### 2. Send me some real video links
 
 - [x] YouTube API key added to `.env`. It works: importing, refreshing, comments, and playlists all ran against the real API.
 - [ ] Send me **a few real Short URLs** from channels you intend to use. Only real vertical Shorts can finish the vertical-video test.
 - [ ] Once signed in as super admin, try the importer at `/admin/youtube-importer` on a real channel. It's the one thing in Phase 7 that hasn't run for real, so tell me how it goes, including any wrong numbers or confusing steps. This is also how to fill your feed: import, then publish from `/admin/shorts`.
+
+### After pulling the feed update
+
+- [ ] Run `npm run db:sync` on each database once. It adds an index that the new feed's queries use, and they work without it but more slowly. Never run `prisma db push` alone.
 
 ### 3. Finish Google sign-in
 
@@ -78,7 +88,7 @@ I can prepare the material, but these need you, and some need a person qualified
 
 ### Legal and compliance
 
-- [ ] **The feed currently breaks YouTube's rules, by your decision of 2026-11-05.** Set `FEED_IMMERSIVE_OVERLAY` to false in `src/config/feed.ts` before applying for the audit, or if YouTube contacts you. See [YOUTUBE_COMPLIANCE_AUDIT.md](YOUTUBE_COMPLIANCE_AUDIT.md).
+- [ ] **The feed currently breaks YouTube's rules, by your decisions of 2026-11-05 and 2026-11-06:** the overlay, and the hidden buffered players. Set `FEED_IMMERSIVE_OVERLAY` to false in `src/config/feed.ts` before applying for the audit, or if YouTube contacts you, which turns both off. See [YOUTUBE_COMPLIANCE_AUDIT.md](YOUTUBE_COMPLIANCE_AUDIT.md).
 - [ ] **Apply for the YouTube API Compliance Audit.** This is the project's largest risk, since whether a multi-channel feed is allowed is unresolved (R1). Launching before clearance risks losing API access. I'll prepare the submission material in Phase 9. Permission from channel owners would also help.
 - [ ] **Who is responsible for the site:** a name or legal entity, and a country
 - [ ] **A contact address** for privacy questions, which YouTube requires

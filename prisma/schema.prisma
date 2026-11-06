@@ -601,6 +601,7 @@ model Video {
   viewingProgress ViewingProgress[]
 
   @@index([status, isArchived, availability, kind, categoryId, feedKey, id])
+  @@index([status, isArchived, availability, kind, categoryId, channelId, feedKey, id])
   @@index([status, isArchived, availability, kind, feedKey, id])
   @@index([status, isArchived, kind, publishedAt])
   @@index([topicIds, status, publishedAt])

@@ -111,6 +111,7 @@ export async function toVideoCards(rows: VideoCardRow[]): Promise<VideoCard[]> {
     kind: row.kind,
     title: row.title,
     description: row.description,
+    channelId: row.channelId,
     channelTitle: row.channelTitle,
     channelImageUrl: row.channelId ? (channelImageById.get(row.channelId) ?? null) : null,
     thumbnailUrl: pickThumbnailUrl(row.thumbnails),

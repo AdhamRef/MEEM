@@ -312,6 +312,24 @@
 .feed-pop {
   animation: feed-pop 0.16s ease-out both;
 }
+/* A short wait reads as faster with no spinner at all, so this only appears if it runs long. */
+.feed-loader-late {
+  animation: feed-pop 0.16s ease-out 1.2s both;
+}
+/* A waiting thumbnail keeps moving, so it never looks stopped. */
+.feed-poster-drift {
+  animation: feed-poster-drift 7s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .feed-poster-drift {
+    animation: none;
+  }
+}
+@keyframes feed-poster-drift {
+  to {
+    transform: scale(1.05);
+  }
+}
 @keyframes feed-pop {
   from {
     opacity: 0;

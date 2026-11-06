@@ -86,10 +86,16 @@ Anything past 30 days with nothing fresher is withdrawn the same way, even when 
 
 ## The player
 
-**Preloading.** The next 5 thumbnails and the next page of videos load ahead. Players don't. On the real player, a video loaded into the existing player started in 0.9 to 1.4 seconds, and a player prepared ahead of time in 1.1 to 3.2 seconds, because YouTube downloads nothing until playback starts. Each prepared player is also a whole iframe, and on phones may not share the person's sound permission. Those figures are from one desktop machine.
+**The home feed differs from the rest of this section, by the owner's decisions of 2026-11-05 and 2026-11-06.** See [YOUTUBE_COMPLIANCE_AUDIT.md](YOUTUBE_COMPLIANCE_AUDIT.md). This is what it does while those settings are on:
 
-- One player per page, created only when needed. "Preload" means the next thumbnail and YouTube's script.
-- Autoplay starts muted, and only in the feed. Other pages wait for a click.
+- **Buffering.** Real players sit on the next 4 cards (3 on devices reporting 4 GB of memory or less, 1 with data saver on). YouTube fetches nothing until a video plays, so a player that's merely prepared gains nothing: in an earlier measurement it started in 1.1 to 3.2 seconds, against 0.9 to 1.4 for loading into the existing player. So each plays muted until its first frame, then rewinds and pauses. Measured on the real player, that starts a video in about 0.29 seconds, against 1.04 to 1.77 when it loads on arrival. Those figures are from one desktop machine, on emulated Chromium.
+- **Fast swipes.** A card with no buffered player shows its thumbnail, which drifts slowly. The spinner stays out of sight for the first 1.2 seconds.
+- **Sound.** On by default, and a person's mute is remembered in the browser. **No browser allows sound before a person has touched the page**, which was measured on the real player: playing unmuted fires `onAutoplayBlocked` and doesn't start, and unmuting a running video pauses it. So the video starts muted when it has to, says "tap for sound", and the first tap or key press anywhere turns it on, with sound on every video after that. If a browser still refuses, the video goes back to muted rather than stopping. Whether sound carries from one player to another on real phones, above all iPhones, **hasn't been tested**.
+
+Everywhere else:
+
+- One player per page, created only when needed.
+- Autoplay starts muted. Other pages wait for a click.
 - Nothing is ever placed in front of the player. **The feed uses YouTube's documented `controls=0` setting** (the owner's decision of 2026-11-05, for a cleaner vertical view), so its control bar doesn't show there. Sound and next are outside the player, and tapping a video pauses it, which YouTube handles. Video and playlist pages keep the controls. The end screen is left alone. A video ending stays on the end screen, with "next" offered outside.
 - It pauses when hidden, and nothing plays in the background.
 - `Referrer-Policy: strict-origin-when-cross-origin` is set globally, because the player fails with error 153 without a referrer.

@@ -180,14 +180,18 @@ score = explicit weight × selected interest weight + behaviour score decayed ov
 
 1. **Scores:** every active category is ranked with the functions above.
 2. **Slots:** `allocateCategorySlots` shares the page by score, and gives the configured exploration share to categories with no positive score. With no history, the mix is even.
-3. **Reading:** each category is read in `(feedKey, id)` order from a random start point chosen per session, wrapping around at the end. The cursor stores one position per category, which is what guarantees no repeats.
-4. **Spreading:** `spreadByGroup` avoids runs of one category or channel where possible.
+3. **This visit:** the browser sends what happened since the page opened, as `momentum` for categories and `channelMomentum` for channels. Completions, replays, and saves raise them and early skips lower them. It only changes this person's next pages, and is never stored. A category's score moves by `sessionMomentumWeight`, and `maxCategoryShare` stops one category taking over a page.
+4. **Choosing channels:** `planFeedPage` decides each card's category and channel. A channel never returns within `channelSpacing` cards while another is available, even if that means borrowing from another category, and this carries across pages through the cursor. Bigger channels are likelier by the square root of their size, so one with most of the library can't dominate. If nothing else is left, the channel seen longest ago comes next.
+5. **Reading:** each category and channel pair is read in `(feedKey, id)` order from a random start point chosen per session, wrapping around at the end. The cursor counts what's been read from each pair, which guarantees no repeats within a round and stays small. A cursor that outgrows a URL starts a new round.
+6. **Rounds:** the feed has no end. Once everything has been shown, the browser starts again in a new order, and nothing repeats before that.
 
 Signed-in people's interests come from their account. Guests' come from browser storage as request hints, which are validated and bounded. A guest's watching stays in the browser until they sign in.
 
 ### The player
 
-`useActivePlayer` manages the one player. **Nothing may be placed in front of it.** All text and controls sit in the card's panel, outside the player, and the first-visit prompt is a slide in the feed rather than a dialog.
+**The home feed's player differs by the owner's decisions of 2026-11-05 and 2026-11-06, and `FeedPlayerPool` (`src/lib/youtube/feed-player-pool.ts`) manages it.** One player is active. Others wait buffered on the coming cards, primed one at a time, nearest first, once the active video has started. See [YOUTUBE_INTEGRATION.md](YOUTUBE_INTEGRATION.md). `FEED_BUFFER_AHEAD` turns this off, which puts the feed back on `useActivePlayer`, described below.
+
+Everywhere else, `useActivePlayer` manages the one player. **Nothing may be placed in front of it.** All text and controls sit in the card's panel, outside the player, and the first-visit prompt is a slide in the feed rather than a dialog.
 
 | Behaviour | Detail |
 |---|---|

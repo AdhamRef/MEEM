@@ -6,6 +6,7 @@ export interface VideoCard {
   /** Exactly as YouTube returned it. */
   title: string;
   description: string | null;
+  channelId: string | null;
   channelTitle: string | null;
   channelImageUrl: string | null;
   thumbnailUrl: string | null;

@@ -3,26 +3,25 @@ import { objectIdSchema } from "@/features/categories/schemas";
 
 const MAX_FEED_KEY = 2 ** 31;
 
-const positionSchema = z.strictObject({
-  /** The last feedKey and ID served from this category. */
-  k: z.number().int().min(0).max(MAX_FEED_KEY),
-  i: objectIdSchema,
-  /** True once reading has passed the end and wrapped to below the start key. */
-  w: z.boolean(),
-});
-
 export const feedCursorSchema = z.strictObject({
   /** Where this session started in the feedKey order, so each visit doesn't open the same way. */
   s: z.number().int().min(0).max(MAX_FEED_KEY),
   /** Page number, which seeds that page's choices. */
   n: z.number().int().min(0).max(1_000_000),
-  p: z.record(objectIdSchema, positionSchema),
-  /** Categories with nothing left. */
-  d: z.array(objectIdSchema).max(500),
+  /** How many have been read from each pool: the category's and channel's IDs, shortened by poolKey. */
+  o: z.record(z.string().regex(/^[0-9a-f]{16}$/), z.number().int().min(0).max(1_000_000)),
+  /** The channels shown last, oldest first, so spacing carries across pages. */
+  r: z.array(objectIdSchema).max(50),
 });
 
 export type FeedCursor = z.infer<typeof feedCursorSchema>;
-export type CategoryPosition = z.infer<typeof positionSchema>;
+
+const ID_TAIL = 8;
+
+/** Keeps a long session's cursor small. A clash could only skip a few videos until the next round. */
+export function poolKey(categoryId: string, channelId: string | null): string {
+  return categoryId.slice(-ID_TAIL) + (channelId ?? "0".repeat(ID_TAIL)).slice(-ID_TAIL);
+}
 
 export function encodeFeedCursor(cursor: FeedCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
@@ -40,5 +39,5 @@ export function decodeFeedCursor(raw: string): FeedCursor | null {
 }
 
 export function newFeedCursor(startKey: number): FeedCursor {
-  return { s: startKey, n: 0, p: {}, d: [] };
+  return { s: startKey, n: 0, o: {}, r: [] };
 }

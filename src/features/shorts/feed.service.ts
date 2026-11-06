@@ -2,18 +2,21 @@ import { randomInt } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { objectIdSchema } from "@/features/categories/schemas";
-import { rankCategories, type CategoryInterest } from "@/features/recommendations/scoring";
+import { applySessionMomentum, channelMomentumFactor, rankCategories, type CategoryInterest } from "@/features/recommendations/scoring";
+import { MAX_SESSION_MOMENTUM } from "@/features/recommendations/session-momentum";
 import { getScoringConfig } from "@/features/recommendations/settings.service";
 import { AppError } from "@/lib/errors";
 import type { Actor } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
-import { allocateCategorySlots, spreadByGroup } from "./allocation";
-import { decodeFeedCursor, encodeFeedCursor, newFeedCursor, type CategoryPosition, type FeedCursor } from "./cursor";
+import { allocateCategorySlots, planFeedPage, type VideoPool } from "./allocation";
+import { decodeFeedCursor, encodeFeedCursor, newFeedCursor, poolKey, type FeedCursor } from "./cursor";
 import type { FeedPage, VideoCard } from "./types";
 import { publicVideoFilter, toVideoCards, videoCardSelect, type VideoCardRow } from "./video-cards";
 
 export const FEED_PAGE_SIZE = 8;
 const MAX_FEED_KEY = 2 ** 31 - 1;
+/** A cursor travels in a URL. Past this, a very long session starts a new round rather than fail. */
+const MAX_CURSOR_LENGTH = 8000;
 
 const guestHintsSchema = z.object({
   selectedCategoryIds: z.array(objectIdSchema).max(100),
@@ -22,11 +25,20 @@ const guestHintsSchema = z.object({
 
 export type GuestFeedHints = z.infer<typeof guestHintsSchema>;
 
+const sessionHintsSchema = z.object({
+  categories: z.record(objectIdSchema, z.number().finite()),
+  channels: z.record(objectIdSchema, z.number().finite()),
+});
+
+export type SessionFeedHints = z.infer<typeof sessionHintsSchema>;
+
 export interface FeedRequest {
   cursor?: string | null;
   categoryId?: string | null;
   /** Used only for guests. Signed-in people's interests always come from their account. */
   guest?: GuestFeedHints;
+  /** What happened during this visit, for anyone. It only reorders their own feed, and isn't stored. */
+  session?: SessionFeedHints;
 }
 
 /**
@@ -35,46 +47,48 @@ export interface FeedRequest {
  */
 export const UNCATEGORIZED_FEED_ID = "000000000000000000000000";
 
+const rawIdSchema = z.object({ $oid: objectIdSchema }).nullish();
+const poolGroupsSchema = z.array(z.object({ _id: z.object({ category: rawIdSchema, channel: rawIdSchema }), count: z.number().int() }));
+
+const NO_VALUE = (field: "categoryId" | "channelId") => ({ OR: [{ [field]: null }, { [field]: { isSet: false } }] });
+
 /**
- * Reads one category from the session's start key to the end, then wraps around to just
- * below the start. Ordering by (feedKey, id) is stable and uses the feed index, and each
- * video is read at most once per session, which is what prevents duplicates.
+ * Reads the next videos of one pool, from the session's start key to the end, then wrapping
+ * around to just below it. A count of what's been read is enough, since (feedKey, id) is a
+ * stable order, and it keeps the cursor small however long the session runs.
  */
-async function readCategory(categoryId: string, startKey: number, position: CategoryPosition | undefined, take: number) {
-  const rows: VideoCardRow[] = [];
-  let current = position;
-  let isFinished = false;
-
-  const read = async (wrapped: boolean, limit: number) => {
-    const after: Prisma.VideoWhereInput[] = current && current.w === wrapped ? [{ feedKey: { gt: current.k } }, { feedKey: current.k, id: { gt: current.i } }] : [];
-    return prisma.video.findMany({
-      where: {
-        ...publicVideoFilter,
-        kind: "SHORT",
-        // Not set can be null or missing, and those differ in filters.
-        ...(categoryId === UNCATEGORIZED_FEED_ID ? { OR: [{ categoryId: null }, { categoryId: { isSet: false } }] } : { categoryId }),
-        ...(wrapped ? { feedKey: { lt: startKey } } : { feedKey: { gte: startKey } }),
-        ...(after.length ? { AND: [{ OR: after }] } : {}),
-      },
-      orderBy: [{ feedKey: "asc" }, { id: "asc" }],
-      take: limit,
-      select: videoCardSelect,
-    });
+async function readPool(pool: VideoPool, startKey: number, alreadyRead: number, take: number): Promise<VideoCardRow[]> {
+  const where: Prisma.VideoWhereInput = {
+    ...publicVideoFilter,
+    kind: "SHORT",
+    AND: [pool.categoryId === UNCATEGORIZED_FEED_ID ? NO_VALUE("categoryId") : { categoryId: pool.categoryId }, pool.channelId === null ? NO_VALUE("channelId") : { channelId: pool.channelId }],
   };
+  const order: Prisma.VideoOrderByWithRelationInput[] = [{ feedKey: "asc" }, { id: "asc" }];
 
-  if (!current?.w) {
-    const firstPart = await read(false, take);
-    rows.push(...firstPart);
-  }
-  if (rows.length < take) {
-    const secondPart = await read(true, take - rows.length);
-    rows.push(...secondPart);
-    isFinished = rows.length < take;
-  }
+  const above = await prisma.video.findMany({ where: { ...where, feedKey: { gte: startKey } }, orderBy: order, skip: alreadyRead, take, select: videoCardSelect });
+  if (above.length === take) return above;
 
-  const last = rows.at(-1);
-  if (last) current = { k: last.feedKey, i: last.id, w: last.feedKey < startKey };
-  return { rows, position: current, isFinished };
+  const countAbove = await prisma.video.count({ where: { ...where, feedKey: { gte: startKey } } });
+  const below = await prisma.video.findMany({ where: { ...where, feedKey: { lt: startKey } }, orderBy: order, skip: Math.max(0, alreadyRead - countAbove), take: take - above.length, select: videoCardSelect });
+  return [...above, ...below];
+}
+
+/** What's published, by category and channel. It reads only these counts, never the videos. */
+async function loadPools(categoryIds: string[], onlyCategoryId: string | null): Promise<VideoPool[]> {
+  // Raw, because Prisma's groupBy panics on MongoDB when a grouped field is missing from a document.
+  const raw = await prisma.video.aggregateRaw({
+    pipeline: [
+      { $match: { ...publicVideoFilter, kind: "SHORT", ...(onlyCategoryId ? { categoryId: { $oid: onlyCategoryId } } : {}) } },
+      { $group: { _id: { category: "$categoryId", channel: "$channelId" }, count: { $sum: 1 } } },
+    ],
+  });
+  const groups = poolGroupsSchema.parse(raw);
+  const active = new Set(categoryIds);
+  return groups.flatMap(({ _id, count }) => {
+    const categoryId = _id.category?.$oid ?? null;
+    if (categoryId && !active.has(categoryId)) return [];
+    return [{ categoryId: categoryId ?? UNCATEGORIZED_FEED_ID, channelId: _id.channel?.$oid ?? null, remaining: count }];
+  });
 }
 
 async function activeCategoryIds(): Promise<string[]> {
@@ -115,70 +129,87 @@ function parseCursor(raw: string | null | undefined): FeedCursor {
   return cursor;
 }
 
+const clampMomentum = (record: Record<string, number>) => Object.fromEntries(Object.entries(record).map(([id, value]) => [id, Math.max(-MAX_SESSION_MOMENTUM, Math.min(MAX_SESSION_MOMENTUM, value))]));
+
 /**
- * One feed page, from stored data only: this never calls the YouTube API. Each category's
- * slots come from the transparent score, and unused slots pass to categories with videos
- * left, so a page is only short when the whole feed is nearly finished.
+ * One feed page, from stored data only: this never calls the YouTube API. Each category's share
+ * comes from the transparent score, plus what happened this visit. Then channels are chosen for
+ * each card, so variety holds across pages and however uneven the library is. No video is read
+ * twice in a round, and nextCursor is null once all of them have been.
  */
 export async function getFeedPage(actor: Actor | null, request: FeedRequest, pageSize = FEED_PAGE_SIZE): Promise<FeedPage> {
   const cursor = parseCursor(request.cursor);
   const config = await getScoringConfig();
 
   let categoryIds = await activeCategoryIds();
+  let onlyCategoryId: string | null = null;
   if (request.categoryId) {
     const parsed = objectIdSchema.safeParse(request.categoryId);
     if (!parsed.success) throw new AppError("VALIDATION");
     if (!categoryIds.includes(parsed.data)) throw new AppError("NOT_FOUND");
+    onlyCategoryId = parsed.data;
     categoryIds = [parsed.data];
-  } else if (await prisma.video.findFirst({ where: { ...publicVideoFilter, kind: "SHORT", OR: [{ categoryId: null }, { categoryId: { isSet: false } }] }, select: { id: true } })) {
-    // Only when there's something in it, or an empty group would take up exploration slots.
-    categoryIds = [...categoryIds, UNCATEGORIZED_FEED_ID];
   }
 
   const guest = request.guest ? guestHintsSchema.safeParse(request.guest) : undefined;
   if (guest && !guest.success) throw new AppError("VALIDATION");
+  const session = request.session ? sessionHintsSchema.safeParse(request.session) : undefined;
+  if (session && !session.success) throw new AppError("VALIDATION");
+  const categoryMomentum = clampMomentum(session?.data.categories ?? {});
+  const channelMomentum = clampMomentum(session?.data.channels ?? {});
 
-  const finished = new Set(cursor.d);
-  const open = categoryIds.filter((id) => !finished.has(id));
+  const allPools = await loadPools(categoryIds, onlyCategoryId);
+  const readCount = (pool: VideoPool) => cursor.o[poolKey(pool.categoryId, pool.channelId)] ?? 0;
+  const pools = allPools.map((pool) => ({ ...pool, remaining: Math.max(0, pool.remaining - readCount(pool)) })).filter((pool) => pool.remaining > 0);
+
+  // Only categories with something left, so an empty one can't take up exploration slots.
+  const withVideos = new Set(pools.map((pool) => pool.categoryId));
+  const open = [...categoryIds, UNCATEGORIZED_FEED_ID].filter((id) => withVideos.has(id));
 
   const interests = await loadInterests(actor, guest?.data, config.maxBehaviourScore);
-  const ranked = rankCategories(open, interests, new Date(), config);
-  const slots = allocateCategorySlots({
-    ranked,
+  const ranked = applySessionMomentum(rankCategories(open, interests, new Date(), config), categoryMomentum, config);
+  const seed = cursor.s + cursor.n;
+  const picks = planFeedPage({
+    categoryOrder: ranked.map((item) => item.categoryId),
+    slots: allocateCategorySlots({ ranked, pageSize, explorationShare: onlyCategoryId ? 0 : config.explorationShare, seed, maxCategoryShare: onlyCategoryId ? 1 : config.maxCategoryShare }),
+    pools,
+    recentChannels: cursor.r,
+    channelSpacing: config.channelSpacing,
     pageSize,
-    explorationShare: request.categoryId ? 0 : config.explorationShare,
-    seed: cursor.s + cursor.n,
+    channelFactor: (channelId) => channelMomentumFactor(channelMomentum[channelId] ?? 0, config),
+    seed,
   });
 
-  const rows: VideoCardRow[] = [];
-  const positions = { ...cursor.p };
-
-  const take = async (categoryId: string, count: number) => {
-    const result = await readCategory(categoryId, cursor.s, positions[categoryId], count);
-    rows.push(...result.rows);
-    if (result.position) positions[categoryId] = result.position;
-    if (result.isFinished) finished.add(categoryId);
-  };
-
-  for (const [categoryId, count] of slots) await take(categoryId, count);
-
-  // Second pass: slots a small category couldn't fill go to the highest-ranked with videos left.
-  for (const { categoryId } of ranked) {
-    const missing = pageSize - rows.length;
-    if (missing <= 0) break;
-    if (!finished.has(categoryId)) await take(categoryId, missing);
+  const wanted = new Map<string, { pool: VideoPool; count: number }>();
+  for (const pick of picks) {
+    const key = poolKey(pick.categoryId, pick.channelId);
+    const entry = wanted.get(key);
+    if (entry) entry.count += 1;
+    else wanted.set(key, { pool: pools.find((pool) => pool.categoryId === pick.categoryId && pool.channelId === pick.channelId)!, count: 1 });
   }
 
-  // Spread by category, then keep one channel from running on when it can be avoided.
-  const byCategory = spreadByGroup(rows, (row) => row.categoryId ?? "");
-  const ordered = spreadByGroup(byCategory, (row) => row.channelId ?? row.id);
+  const positions = { ...cursor.o };
+  const readRows = new Map<string, VideoCardRow[]>();
+  await Promise.all(
+    [...wanted].map(async ([key, { pool, count }]) => {
+      readRows.set(key, await readPool(pool, cursor.s, positions[key] ?? 0, count));
+    }),
+  );
+  for (const [key, { count }] of wanted) positions[key] = (positions[key] ?? 0) + count;
+
+  const ordered = picks.flatMap((pick) => {
+    const row = readRows.get(poolKey(pick.categoryId, pick.channelId))?.shift();
+    return row ? [row] : [];
+  });
   const cards: VideoCard[] = await toVideoCards(ordered);
 
-  const hasMore = categoryIds.some((id) => !finished.has(id));
-  return {
-    items: cards,
-    nextCursor: hasMore ? encodeFeedCursor({ s: cursor.s, n: cursor.n + 1, p: positions, d: [...finished] }) : null,
-  };
+  const leftOver = pools.reduce((total, pool) => total + pool.remaining, 0) - picks.length;
+  if (leftOver <= 0) return { items: cards, nextCursor: null };
+
+  const shown = [...cursor.r, ...ordered.flatMap((row) => (row.channelId ? [row.channelId] : []))];
+  const next: FeedCursor = { s: cursor.s, n: cursor.n + 1, o: positions, r: config.channelSpacing === 0 ? [] : shown.slice(-config.channelSpacing) };
+  const encoded = encodeFeedCursor(next);
+  return { items: cards, nextCursor: encoded.length <= MAX_CURSOR_LENGTH ? encoded : encodeFeedCursor({ ...newFeedCursor(randomInt(MAX_FEED_KEY)), r: next.r }) };
 }
 
 /** A public video for its own page, in any kind. Null when it can't be shown. */

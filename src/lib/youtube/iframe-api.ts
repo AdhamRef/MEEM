@@ -46,7 +46,7 @@ export const PLAYER_STATE = { ENDED: 0, PLAYING: 1, PAUSED: 2 } as const;
 
 let loading: Promise<YouTubeNamespace> | undefined;
 
-/** Loads YouTube's script once. This is the only preloading: no hidden player is ever created. */
+/** Loads YouTube's script once. */
 export function loadYouTubeIframeApi(): Promise<YouTubeNamespace> {
   const target = window as unknown as YouTubeWindow;
 

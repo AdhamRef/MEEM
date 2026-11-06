@@ -10,18 +10,29 @@ import { expect, test } from "./support/test";
 async function openFeed(page: Page, path = "/") {
   await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
   await page.goto(path);
-  await expect(page.locator("iframe")).toHaveCount(1, { timeout: 15_000 });
+  await expect(activeFrame(page)).toHaveCount(1, { timeout: 15_000 });
 }
 
-const activeFrameVideo = (page: Page) => page.locator("iframe").getAttribute("data-video-id");
+/** The player on screen. Others stay buffered on the cards coming up. */
+function activeFrame(page: Page) {
+  return page.locator('[data-player-role="active"] iframe');
+}
+
+const activeFrameVideo = (page: Page) => activeFrame(page).getAttribute("data-video-id");
 const calls = (page: Page) => page.evaluate(() => (window as unknown as { __ytCalls: { name: string; videoId: string; arg?: unknown }[] }).__ytCalls);
 const fire = (page: Page, method: string, value?: number) =>
-  page.evaluate(([name, arg]) => (window as unknown as { __ytPlayers: Record<string, (value?: unknown) => void>[] }).__ytPlayers[0]![name as string]!(arg), [method, value] as const);
+  page.evaluate(
+    ([name, arg]) => {
+      const players = (window as unknown as { __ytPlayers: (Record<string, (value?: unknown) => void> & { __frame: Element })[] }).__ytPlayers;
+      players.find((player) => player.__frame.closest('[data-player-role="active"]'))![name as string]!(arg);
+    },
+    [method, value] as const,
+  );
 
 /** The card whose slot the player currently sits over. */
 const activeCard = (page: Page) =>
   page.evaluate(() => {
-    const frame = document.querySelector('[data-testid="player-mount"]')!.getBoundingClientRect();
+    const frame = document.querySelector('[data-player-role="active"]')!.getBoundingClientRect();
     const cards = [...document.querySelectorAll<HTMLElement>('[data-testid="feed-card"]')];
     const card = cards.find((element) => {
       const box = element.getBoundingClientRect();
@@ -40,16 +51,119 @@ async function moveNext(page: Page) {
 }
 
 test.describe("playback rules", () => {
-  test("there is exactly one player, for the active card, and thumbnails for the others", async ({ page }) => {
+  test("one player on screen, and real players buffered on the next cards, muted and paused", async ({ page }) => {
     await openFeed(page);
 
-    const iframes = page.locator("iframe");
-    await expect(iframes).toHaveCount(1);
+    await expect.poll(() => page.locator("iframe").count(), { timeout: 15_000 }).toBeGreaterThanOrEqual(4);
+    await expect(activeFrame(page)).toHaveCount(1);
+    expect(await page.locator("iframe").count()).toBeLessThanOrEqual(5);
 
+    const states = await page.evaluate(() => {
+      const box = document.querySelector('[data-testid="feed-scroller"]')!.getBoundingClientRect();
+      const players = (window as unknown as { __ytPlayers: { __frame: Element; isMuted(): boolean }[] }).__ytPlayers;
+      return players
+        .filter((player) => !player.__frame.closest('[data-player-role="active"]'))
+        .map((player) => {
+          const frame = player.__frame.getBoundingClientRect();
+          return { isMuted: player.isMuted(), isOnScreen: frame.top < box.bottom && frame.bottom > box.top, isInert: Boolean(player.__frame.closest("[inert]")) };
+        });
+    });
+    expect(states.length).toBeGreaterThanOrEqual(3);
+    for (const state of states) expect(state).toEqual({ isMuted: true, isOnScreen: false, isInert: true });
+
+    // Every card has a thumbnail, which also covers the active one until its first frame.
     const cardCount = await page.getByTestId("feed-card").count();
     expect(cardCount).toBeGreaterThan(1);
-    // Every card has a thumbnail, which also covers the active one until its first frame.
     await expect(page.locator('[data-testid="player-slot"] img')).toHaveCount(cardCount);
+  });
+
+  test("swiping onto a buffered card plays it at once, with no new load and no spinner", async ({ page }) => {
+    await openFeed(page);
+    await expect.poll(() => page.locator("iframe").count(), { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
+    await page.waitForTimeout(500);
+
+    const second = await page.getByTestId("feed-card").nth(1).getAttribute("data-video-id");
+    const before = (await calls(page)).filter((call) => call.name === "loadVideoById").length;
+    await moveNext(page);
+    await expect.poll(() => activeCard(page)).toBe(second);
+    await expect(page.getByTestId("feed-card").nth(1).getByTestId("feed-poster")).toHaveAttribute("data-visible", "false", { timeout: 5000 });
+    expect((await calls(page)).filter((call) => call.name === "loadVideoById").length).toBe(before);
+    await expect(activeFrame(page)).toHaveCount(1);
+  });
+
+  test("the number of players stays capped however far someone goes", async ({ page }) => {
+    await openFeed(page);
+    for (let step = 0; step < 8; step += 1) {
+      await moveNext(page);
+      await page.waitForTimeout(150);
+    }
+    await page.waitForTimeout(1000);
+    expect(await page.locator("iframe").count()).toBeLessThanOrEqual(5);
+    await expect(activeFrame(page)).toHaveCount(1);
+    expect(await page.locator('[data-testid="video-loader"]').count()).toBeLessThanOrEqual(1);
+  });
+
+  test("the waiting spinner stays out of sight unless a wait runs long", async ({ page }) => {
+    await page.addInitScript(() => Object.assign(window, { __ytHoldFirstFrame: true }));
+    await openFeed(page);
+    const loader = page.locator('[data-testid="video-loader"]').first();
+    await expect(loader).toBeAttached();
+    expect(await loader.evaluate((element) => getComputedStyle(element).animationDelay)).toBe("1.2s");
+  });
+
+  test("buffering stops when the page is hidden, and nothing keeps playing", async ({ page }) => {
+    await openFeed(page);
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { value: true, configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    const lastCalls = (await calls(page)).slice(-1);
+    expect(lastCalls[0]?.name).toBe("pauseVideo");
+  });
+
+  test("sound is on by default: where the browser blocks it the video still plays, and the first touch brings it", async ({ page }) => {
+    await openFeed(page);
+    const hint = page.getByTestId("sound-hint");
+    await expect(hint).toBeVisible();
+    await expect(hint).toContainText("اضغط لتشغيل الصوت");
+    await expect.poll(async () => (await calls(page)).some((call) => call.name === "playVideo")).toBeTruthy();
+
+    await page.getByTestId("feed-tabs").getByRole("button").last().hover();
+    await page.mouse.click(5, 300);
+    await expect(hint).toHaveCount(0);
+    expect((await calls(page)).some((call) => call.name === "unMute")).toBe(true);
+  });
+
+  test("sound stays on for each video after that, and a chosen mute is remembered", async ({ page }) => {
+    await openFeed(page);
+    await page.mouse.click(5, 300);
+    await expect(page.getByTestId("sound-hint")).toHaveCount(0);
+    const unmutes = (await calls(page)).filter((call) => call.name === "unMute").length;
+
+    await moveNext(page);
+    await expect.poll(async () => (await calls(page)).filter((call) => call.name === "unMute").length).toBeGreaterThan(unmutes);
+    await expect(page.getByTestId("sound-hint")).toHaveCount(0);
+
+    await page.keyboard.press("m");
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem("feed.sound"))).toBe("off");
+    await page.reload();
+    await expect(activeFrame(page)).toHaveCount(1, { timeout: 15_000 });
+    await page.waitForTimeout(300);
+    await expect(page.getByTestId("sound-hint")).toHaveCount(0);
+    const vars = await page.evaluate(() => (window as unknown as { __ytOptions: { playerVars: { mute: number } }[] }).__ytOptions[0]!.playerVars);
+    expect(vars.mute).toBe(1);
+  });
+
+  test("a refused unmute falls back to muted playback rather than stopping the video", async ({ page }) => {
+    await openFeed(page);
+    await expect(page.getByTestId("sound-hint")).toBeVisible();
+    // Pretends the browser reports past activity while the player still refuses, as can happen on phones.
+    await page.evaluate(() => Object.defineProperty(navigator, "userActivation", { value: { hasBeenActive: true }, configurable: true }));
+    await page.evaluate(() => Object.assign(window, { __ytActivated: false }));
+    await page.keyboard.press("ArrowDown");
+    await page.evaluate(() => Object.assign(window, { __ytActivated: false }));
+    await expect(page.locator('[data-testid="paused-indicator"]')).toHaveCount(0);
+    await expect(activeFrame(page)).toHaveCount(1);
   });
 
   // The owner's decision of 2026-11-05: see FEED_IMMERSIVE_OVERLAY. This describes that layout.
@@ -58,7 +172,7 @@ test.describe("playback rules", () => {
     await expect.poll(() => activeCard(page)).not.toBeNull();
 
     const result = await page.evaluate(() => {
-      const mount = document.querySelector('[data-testid="player-mount"]')!;
+      const mount = document.querySelector('[data-player-role="active"]')!;
       const box = mount.getBoundingClientRect();
       const reached = [0.1, 0.5, 0.9].flatMap((x) => [0.1, 0.5].map((y) => document.elementFromPoint(box.left + box.width * x, box.top + box.height * y)));
       return { reachesPlayer: reached.some((element) => element?.tagName === "IFRAME"), width: box.width, height: box.height };
@@ -137,11 +251,16 @@ test.describe("playback rules", () => {
     await expect(next.getByTestId("video-loader")).toHaveCount(0);
   });
 
-  test("autoplay starts muted, with YouTube's documented controls setting off, and nothing in front", async ({ page }) => {
+  test("the player uses YouTube's documented settings, and only the active one autoplays", async ({ page }) => {
     await openFeed(page);
-    const vars = await page.evaluate(() => (window as unknown as { __ytOptions: { playerVars: Record<string, unknown> }[] }).__ytOptions[0]!.playerVars);
+    const allVars = await page.evaluate(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      return (window as unknown as { __ytOptions: { playerVars: Record<string, unknown> }[] }).__ytOptions.map((options) => options.playerVars);
+    });
+    const vars = allVars[0]!;
 
-    expect(vars).toMatchObject({ autoplay: 1, mute: 1, controls: 0, playsinline: 1, enablejsapi: 1 });
+    expect(vars).toMatchObject({ autoplay: 1, controls: 0, playsinline: 1, enablejsapi: 1 });
+    expect(allVars.slice(1).every((other) => other.autoplay === 0 && other.mute === 1)).toBe(true);
     expect(vars.origin).toBe(new URL(page.url()).origin);
     // Options that would hide YouTube's own interface must never be set.
     expect(vars).not.toHaveProperty("modestbranding");
@@ -149,15 +268,14 @@ test.describe("playback rules", () => {
     expect(vars).not.toHaveProperty("showinfo");
   });
 
-  test("moving on pauses nothing extra and loads the next video into the one player", async ({ page }) => {
+  test("moving on starts the next video, and only one player is ever active", async ({ page }) => {
     await openFeed(page);
     const first = await activeFrameVideo(page);
 
     await moveNext(page);
 
     await expect.poll(() => activeFrameVideo(page)).not.toBe(first);
-    await expect(page.locator("iframe")).toHaveCount(1);
-    expect((await calls(page)).filter((call) => call.name === "loadVideoById").length).toBeGreaterThanOrEqual(1);
+    await expect(activeFrame(page)).toHaveCount(1);
   });
 
   test("moving before the player is ready doesn't crash, and ends on the right video", async ({ page }) => {
@@ -170,7 +288,7 @@ test.describe("playback rules", () => {
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
 
-    await expect(page.locator("iframe")).toHaveCount(1);
+    await expect(activeFrame(page)).toHaveCount(1);
     await page.waitForTimeout(800);
     expect(errors).toEqual([]);
   });
@@ -189,8 +307,8 @@ test.describe("playback rules", () => {
     const first = await activeFrameVideo(page);
     // Only a fifth of the next card is showing, and it's already loading.
     await scrollTo(0.2);
-    await expect.poll(async () => (await calls(page)).some((call) => call.name === "loadVideoById")).toBeTruthy();
-    expect(await page.locator("iframe").count()).toBe(1);
+    await expect.poll(() => activeFrameVideo(page)).not.toBe(first);
+    expect(await activeFrame(page).count()).toBe(1);
 
     await scrollTo(0);
     await expect.poll(async () => (await calls(page)).filter((call) => call.name === "loadVideoById").at(-1)?.arg).toBe(first);
@@ -275,7 +393,7 @@ test.describe("the feed content", () => {
     }
   });
 
-  test("pages through everything with no repeats, ending clearly, and never shows hidden videos", async ({ page }) => {
+  test("shows everything once before anything repeats, never ends, and never shows hidden videos", async ({ page }) => {
     test.setTimeout(120_000);
     const requests: string[] = [];
     page.on("request", (request) => {
@@ -283,8 +401,10 @@ test.describe("the feed content", () => {
     });
     await openFeed(page);
 
-    for (let step = 0; step < 40; step += 1) {
-      if (await page.getByTestId("feed-end").count()) break;
+    const expected = await prisma.video.count({ where: { status: "PUBLISHED", isArchived: false, availability: "AVAILABLE", kind: "SHORT", category: { isActive: true } } });
+    const cards = page.getByTestId("feed-card");
+    for (let step = 0; step < 60; step += 1) {
+      if ((await cards.count()) > expected) break;
       const scroller = page.getByTestId("feed-scroller");
       await scroller.evaluate((element) => {
         element.scrollTop = element.scrollHeight;
@@ -292,14 +412,10 @@ test.describe("the feed content", () => {
       await page.waitForTimeout(250);
     }
 
-    await expect(page.getByTestId("feed-end")).toBeAttached({ timeout: 15_000 });
+    await expect.poll(() => cards.count(), { timeout: 15_000 }).toBeGreaterThan(expected);
 
-    const cards = page.getByTestId("feed-card");
     const ids = await cards.evaluateAll((elements) => elements.map((element) => (element as HTMLElement).dataset.videoId!));
-    expect(new Set(ids).size).toBe(ids.length);
-
-    const expected = await prisma.video.count({ where: { status: "PUBLISHED", isArchived: false, availability: "AVAILABLE", kind: "SHORT", category: { isActive: true } } });
-    expect(ids.length).toBe(expected);
+    expect(new Set(ids.slice(0, expected)).size).toBe(expected);
     expect(expected).toBeGreaterThanOrEqual(SEEDED_SHORTS_PER_CATEGORY * 4);
 
     const titles = (await cards.locator("h2").allTextContents()).join(" ");
@@ -502,7 +618,7 @@ test.describe("shareable pages", () => {
 
     const first = page.getByTestId("feed-card").first();
     await expect(first).toHaveAttribute("data-video-id", video.id);
-    await expect(page.locator("iframe")).toHaveAttribute("data-video-id", video.youtubeVideoId);
+    await expect(activeFrame(page)).toHaveAttribute("data-video-id", video.youtubeVideoId);
     await expect(page.locator(`[data-video-id="${video.id}"]`)).toHaveCount(1);
     await expect(page).toHaveTitle(new RegExp(video.title));
     await expect(page.getByTestId("onboarding")).toHaveCount(0);
@@ -533,7 +649,7 @@ test.describe("shareable pages", () => {
     expect(vars).toMatchObject({ autoplay: 0, controls: 1 });
     await expect(page.getByTestId("youtube-attribution")).toContainText("المصدر: YouTube");
 
-    const box = await page.locator("iframe").boundingBox();
+    const box = await activeFrame(page).boundingBox();
     expect(box!.width).toBeGreaterThanOrEqual(200);
     expect(box!.height).toBeGreaterThanOrEqual(200);
   });
@@ -691,9 +807,9 @@ test.describe("sizing the video to the screen", () => {
         const card = page.locator(`[data-testid="feed-card"][data-video-id="${video.id}"]`);
         const slot = card.getByTestId("player-slot");
         await expect(page.locator("iframe")).toHaveCount(1);
-        await expect.poll(async () => (await page.locator("iframe").boundingBox())?.width ?? 0).toBeGreaterThan(0);
+        await expect.poll(async () => (await activeFrame(page).boundingBox())?.width ?? 0).toBeGreaterThan(0);
 
-        const [slotBox, cardBox, frameBox] = await Promise.all([slot.boundingBox(), card.boundingBox(), page.locator("iframe").boundingBox()]);
+        const [slotBox, cardBox, frameBox] = await Promise.all([slot.boundingBox(), card.boundingBox(), activeFrame(page).boundingBox()]);
         // No part of the video is lost: its width fits inside the slot, and it's centred.
         expect(frameBox!.width).toBeLessThanOrEqual(slotBox!.width + 1);
         expect(Math.abs(frameBox!.x + frameBox!.width / 2 - (slotBox!.x + slotBox!.width / 2))).toBeLessThanOrEqual(1);

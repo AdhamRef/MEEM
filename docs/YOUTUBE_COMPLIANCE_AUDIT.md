@@ -10,7 +10,11 @@ Submit it through the [API Services audit and quota extension form](https://supp
 
 Rules this conflicts with: "You must not display overlays, frames, or other visual elements in front of any part of a YouTube embedded player", "you must not use overlays, frames or other visual elements to obscure any part of an embedded player", and policy I.6, "modify, build upon, or block any portion or functionality of a YouTube player".
 
-**This won't pass an audit as it stands.** Set the flag to false before applying, which restores the layout the tables below describe. The tables describe that compliant layout, not the current one.
+**The feed also buffers hidden players, by the owner's decision of 2026-11-06.** With `FEED_BUFFER_AHEAD` above zero, real players sit on the next 3 or 4 cards, off screen. YouTube fetches nothing until a video plays, so each one plays muted until its first frame, then rewinds and pauses. The feed also starts with sound where the browser allows it, rather than always muted.
+
+Rules this conflicts with: autoplay only when more than half the player is visible, only one auto-playing player, and playback only as a person's choice. Playing out of sight may also trigger ads nobody sees, or count as artificial playback for the channel. Neither was measured. Priming gives up and pauses after 6 seconds so that nothing keeps running unseen, and hidden plays are never recorded as views or signals on this site, but what YouTube records can't be controlled from here.
+
+**This won't pass an audit as it stands.** Set `FEED_IMMERSIVE_OVERLAY` to false before applying, which also turns buffering off and restores the layout the tables below describe. The tables describe that compliant layout, not the current one.
 
 ## Before submitting
 

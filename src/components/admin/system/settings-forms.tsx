@@ -62,6 +62,10 @@ export function ScoringSettingsForm({ initial }: { initial: ScoringConfig }) {
   const [skip, setSkip] = useState(String(initial.signalWeights.earlySkip));
   const [maxScore, setMaxScore] = useState(String(initial.maxBehaviourScore));
   const [halfLife, setHalfLife] = useState(String(initial.decayHalfLifeDays));
+  const [channelSpacing, setChannelSpacing] = useState(String(initial.channelSpacing));
+  const [categoryShare, setCategoryShare] = useState(String(Math.round(initial.maxCategoryShare * 100)));
+  const [sessionMomentum, setSessionMomentum] = useState(String(initial.sessionMomentumWeight));
+  const [channelMomentum, setChannelMomentum] = useState(String(initial.channelMomentumWeight));
 
   return (
     <section className="space-y-4 rounded-xl border bg-surface p-4" data-testid="scoring-settings">
@@ -71,6 +75,10 @@ export function ScoringSettingsForm({ initial }: { initial: ScoringConfig }) {
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <NumberField label={s.exploration} hint={s.explorationHint} value={exploration} onChange={setExploration} testId="exploration" />
+        <NumberField label={s.channelSpacing} hint={s.channelSpacingHint} value={channelSpacing} onChange={setChannelSpacing} testId="channel-spacing" />
+        <NumberField label={s.maxCategoryShare} hint={s.maxCategoryShareHint} value={categoryShare} onChange={setCategoryShare} testId="category-share" />
+        <NumberField label={s.sessionMomentum} hint={s.sessionMomentumHint} value={sessionMomentum} onChange={setSessionMomentum} testId="session-momentum" />
+        <NumberField label={s.channelMomentum} hint={s.channelMomentumHint} value={channelMomentum} onChange={setChannelMomentum} testId="channel-momentum" />
         <NumberField label={s.interestWeight} value={interest} onChange={setInterest} />
         <NumberField label={s.completionWeight} step="0.05" value={completion} onChange={setCompletion} />
         <NumberField label={s.saveWeight} step="0.05" value={saved} onChange={setSaved} />
@@ -91,6 +99,10 @@ export function ScoringSettingsForm({ initial }: { initial: ScoringConfig }) {
               maxBehaviourScore: Number(maxScore),
               decayHalfLifeDays: Number(halfLife),
               explorationShare: Number(exploration) / 100,
+              channelSpacing: Number(channelSpacing),
+              maxCategoryShare: Number(categoryShare) / 100,
+              sessionMomentumWeight: Number(sessionMomentum),
+              channelMomentumWeight: Number(channelMomentum),
             }),
           )
         }

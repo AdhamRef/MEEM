@@ -15,7 +15,7 @@ const MIN_CHARACTERS = 2;
  * A plain GET form, so searching works before the page's scripts load. Suggestions only add to it,
  * and if they fail, the form still works. Nothing is stored about what's typed.
  */
-export function SearchBox({ initialQuery, children }: { initialQuery: string; children?: ReactNode }) {
+export function SearchBox({ initialQuery, isCompact = false, children }: { initialQuery: string; isCompact?: boolean; children?: ReactNode }) {
   const router = useRouter();
   const listId = useId();
   const [query, setQuery] = useState(initialQuery);
@@ -90,7 +90,7 @@ export function SearchBox({ initialQuery, children }: { initialQuery: string; ch
             aria-controls={listId}
             aria-autocomplete="list"
             aria-activedescendant={isShowing && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
-            className="h-12 ps-9 text-base"
+            className={isCompact ? "h-11 rounded-full ps-9 text-base md:h-10" : "h-12 ps-9 text-base"}
             data-testid="search-input"
             onChange={(event) => {
               hasEdited.current = true;
@@ -123,7 +123,7 @@ export function SearchBox({ initialQuery, children }: { initialQuery: string; ch
             ))}
           </ul>
         </div>
-        <Button type="submit" className="h-12" data-testid="search-submit">
+        <Button type="submit" className={isCompact ? "h-11 rounded-full md:h-10" : "h-12"} data-testid="search-submit">
           {strings.search.submit}
         </Button>
       </div>

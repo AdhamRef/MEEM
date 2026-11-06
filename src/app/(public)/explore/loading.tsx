@@ -1,21 +1,21 @@
+import { VideoCardSkeleton, videoGridClass } from "@/components/explore/explore-cards";
 import { Skeleton } from "@/components/ui/skeleton";
 import { strings } from "@/config/strings.ar";
 
 export default function ExploreLoading() {
   return (
-    <div role="status" aria-label={strings.states.loading} className="mx-auto w-full max-w-6xl space-y-10 px-4 py-8 md:px-8">
-      <div className="space-y-3">
-        <Skeleton className="h-9 w-40" />
-        <Skeleton className="h-4 w-full max-w-xl" />
+    <div role="status" aria-label={strings.states.loading} className="w-full">
+      <div className="space-y-3 px-4 pt-3 pb-3 md:px-6">
+        <Skeleton className="mx-auto h-10 w-full max-w-2xl rounded-full" />
+        <div className="flex gap-2 overflow-hidden">
+          {Array.from({ length: 8 }, (_, index) => (
+            <Skeleton key={index} className="h-9 w-24 shrink-0 rounded-lg" />
+          ))}
+        </div>
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
-        {Array.from({ length: 8 }, (_, index) => (
-          <Skeleton key={index} className="h-16 rounded-xl" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 3 }, (_, index) => (
-          <Skeleton key={index} className="aspect-16/9 w-full rounded-2xl" />
+      <div className={`${videoGridClass} px-4 pt-4 md:px-6`}>
+        {Array.from({ length: 12 }, (_, index) => (
+          <VideoCardSkeleton key={index} />
         ))}
       </div>
     </div>

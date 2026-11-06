@@ -234,7 +234,7 @@ test.describe("first-visit privacy notice", () => {
 
     // The page beneath it still works.
     await page.getByTestId("explore-category").first().click();
-    await expect(page).toHaveURL(/\/topics/);
+    await expect(page).toHaveURL(/\/explore\?category=/);
 
     await page.getByTestId("privacy-notice-dismiss").click();
     await expect(notice).toHaveCount(0);

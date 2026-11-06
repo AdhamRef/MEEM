@@ -15,7 +15,7 @@ import {
 } from "@/features/collections/collections.service";
 import { summarizeContent } from "@/features/content/describe";
 import type { ResolvedContent } from "@/features/content/resolve";
-import { getExploreSections, listPopularContent, listTopicsForInterests, POPULAR_MIN_ITEMS, POPULAR_MIN_VIEWERS } from "@/features/explore/explore.service";
+import { getExploreSections, listExploreVideos, listPopularContent, listTopicsForInterests, POPULAR_MIN_ITEMS, POPULAR_MIN_VIEWERS } from "@/features/explore/explore.service";
 import { getSavedIds, setContentSaved } from "@/features/favorites/favorites.service";
 import { searchContent, suggestContent, type SearchGroup, type SearchResult, type SearchType } from "@/features/search/search.service";
 import { clearHistory, listContinueWatching, listHistory, listSavedContent, recordContentView, removeFromHistory } from "@/features/users/library.service";
@@ -716,5 +716,55 @@ describe("featured articles", () => {
     await setArticleFeatured(editor, article.id, true);
     expect((await prisma.article.findUnique({ where: { id: article.id } }))?.isFeatured).toBe(true);
     expect(await prisma.auditLog.count({ where: { action: "article.feature", entityId: article.id } })).toBe(1);
+  });
+});
+
+describe("the explore video list", () => {
+  async function exploreVideo(kind: "SHORT" | "LONG_FORM", categoryId: string | null, channelId: string | null, index: number) {
+    return prisma.video.create({
+      data: {
+        youtubeVideoId: `x${kind[0]}${String(index).padStart(9, "0")}`,
+        kind,
+        classification: kind === "SHORT" ? "SHORT_CANDIDATE" : "LONG_FORM_CANDIDATE",
+        status: "PUBLISHED",
+        availability: "AVAILABLE",
+        title: `مقطع ${index}`,
+        feedKey: index * 1000,
+        categoryId,
+        channelId,
+        metadataFetchedAt: new Date(),
+      },
+    });
+  }
+
+  it("goes through every video of a kind, once each, with no limit on how many", async () => {
+    const category = await prisma.category.create({ data: { title: "أ", slug: "explore-all" } });
+    const channels = await Promise.all(["1", "2", "3"].map((n) => prisma.youTubeChannel.create({ data: { youtubeChannelId: `UCx${n}`, title: n } })));
+    const expected = new Set<string>();
+    for (let index = 0; index < 60; index += 1) expected.add((await exploreVideo("LONG_FORM", category.id, channels[index % 3]!.id, index)).id);
+    await exploreVideo("SHORT", category.id, channels[0]!.id, 100);
+
+    const seen: string[] = [];
+    let cursor: string | null | undefined;
+    for (let page = 0; page < 10; page += 1) {
+      const result = await listExploreVideos({ kind: "LONG_FORM", cursor, size: 24 });
+      seen.push(...result.items.map((item) => item.id));
+      cursor = result.nextCursor;
+      if (!cursor) break;
+    }
+    expect(seen).toHaveLength(60);
+    expect(new Set(seen)).toEqual(expected);
+  });
+
+  it("narrows to one category, and refuses bad input", async () => {
+    const [first, second] = await Promise.all([prisma.category.create({ data: { title: "أ", slug: "explore-a" } }), prisma.category.create({ data: { title: "ب", slug: "explore-b" } })]);
+    const inside = await exploreVideo("LONG_FORM", first.id, null, 1);
+    await exploreVideo("LONG_FORM", second.id, null, 2);
+
+    const { items } = await listExploreVideos({ kind: "LONG_FORM", categoryId: first.id, size: 24 });
+    expect(items.map((item) => item.id)).toEqual([inside.id]);
+    await expect(listExploreVideos({ kind: "OTHER", size: 24 })).rejects.toThrow();
+    await expect(listExploreVideos({ kind: "SHORT", size: 1000 })).rejects.toThrow();
+    await expect(listExploreVideos({ kind: "SHORT", categoryId: "nope", size: 24 })).rejects.toThrow();
   });
 });

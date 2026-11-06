@@ -248,9 +248,9 @@ describe("the feed", () => {
 
   it("answers what happened this visit, on the next page", async () => {
     const [liked, other, skipped] = await Promise.all([category("أ"), category("ب"), category("ج")]);
-    const channels = await createChannels(9);
+    const channels = await createChannels(21);
     for (const [offset, cat] of [liked, other, skipped].entries()) {
-      for (let index = 0; index < 12; index += 1) await video(cat.id, { channelId: channels[offset * 3 + (index % 3)]!.id });
+      for (let index = 0; index < 14; index += 1) await video(cat.id, { channelId: channels[offset * 7 + (index % 7)]!.id });
     }
     const countIn = (items: { category: { id: string } | null }[], id: string) => items.filter((item) => item.category?.id === id).length;
 

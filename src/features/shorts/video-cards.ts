@@ -125,5 +125,6 @@ export async function toVideoCards(rows: VideoCardRow[]): Promise<VideoCard[]> {
     }),
     cta: ctas.get(row.id) ?? null,
     viewCount: settings.statisticsEnabled && row.stats?.viewCount != null ? Number(row.stats.viewCount) : null,
+    likeCount: settings.statisticsEnabled && row.stats?.likeCount != null ? Number(row.stats.likeCount) : null,
   }));
 }

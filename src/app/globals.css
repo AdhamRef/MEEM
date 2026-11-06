@@ -312,6 +312,13 @@
 .feed-pop {
   animation: feed-pop 0.16s ease-out both;
 }
+/* A row people scroll sideways, with its own arrows on larger screens. */
+.scroll-row {
+  scrollbar-width: none;
+}
+.scroll-row::-webkit-scrollbar {
+  display: none;
+}
 /* A short wait reads as faster with no spinner at all, so this only appears if it runs long. */
 .feed-loader-late {
   animation: feed-pop 0.16s ease-out 1.2s both;

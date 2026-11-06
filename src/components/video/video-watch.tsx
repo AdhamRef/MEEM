@@ -121,6 +121,20 @@ export function VideoWatch({ video, related }: { video: VideoCard; related?: Rea
 
       <div className="space-y-3 px-4 md:px-0">
         {video.category ? <Badge variant="secondary">{video.category.title}</Badge> : null}
+        {video.viewCount !== null || video.likeCount !== null ? (
+          <p className="flex flex-wrap gap-x-4 text-xs text-text-secondary" data-testid="video-statistics">
+            {video.viewCount !== null ? (
+              <span>
+                <bdi>{video.viewCount.toLocaleString("ar")}</bdi> {strings.feed.views}
+              </span>
+            ) : null}
+            {video.likeCount !== null ? (
+              <span>
+                <bdi>{video.likeCount.toLocaleString("ar")}</bdi> {strings.feed.likes}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
         <h1 dir="auto" className="text-start text-xl leading-snug font-semibold">
           {video.title}
         </h1>

@@ -2,7 +2,7 @@
 
 import { Clapperboard, RotateCw, TriangleAlert } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { OnboardingPrompt } from "@/components/preferences/onboarding-prompt";
 import { usePreferences } from "@/components/preferences/preferences-provider";
 import { StateMessage } from "@/components/shared/state-message";
@@ -18,12 +18,13 @@ import { signalFromWatch } from "@/features/recommendations/watch-rules";
 import type { VideoCard } from "@/features/shorts/types";
 import { useActivePlayer } from "@/hooks/useActivePlayer";
 import { useFeedPlayerPool } from "@/hooks/useFeedPlayerPool";
-import type { PoolEvents, PoolTarget } from "@/lib/youtube/feed-player-pool";
+import { hasBrowserActivation, readSoundPreference, type PoolEvents, type PoolTarget } from "@/lib/youtube/feed-player-pool";
 import { loadYouTubeIframeApi } from "@/lib/youtube/iframe-api";
 import { cn } from "@/lib/utils";
 import { FeedCard, feedVideoRatio } from "./feed-card";
 import { ImmersiveFeedCard } from "./feed-card-immersive";
 import { FeedLoader } from "./feed-loader";
+import { SoundGate } from "./sound-gate";
 
 const Card = FEED_IMMERSIVE_OVERLAY ? ImmersiveFeedCard : FeedCard;
 import { useFeedPages } from "./use-feed-pages";
@@ -73,11 +74,15 @@ function useSingleFeedPlayer({ mountsRef, active, isInView, place, onWatchFinish
     if (mount && active) place(mount, active.index);
   }, [mountRef, active, place]);
   useEffect(reposition, [reposition]);
-  return { ...player, isSoundLocked: false, reposition };
+  return { ...player, isSoundLocked: false, leavingKey: null, beginWithSound: () => {}, reposition };
 }
 
 // Chosen once, so the same hook runs on every render. See FEED_BUFFER_AHEAD.
 const useFeedPlayer = FEED_BUFFER_AHEAD > 0 ? useFeedPlayerPool : useSingleFeedPlayer;
+
+const subscribeToNothing = () => () => {};
+/** Asks only where the browser would refuse sound, and never of someone who chose to mute. */
+const browserWouldBlockSound = () => FEED_BUFFER_AHEAD > 0 && !hasBrowserActivation() && readSoundPreference();
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -212,7 +217,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     }
   }, []);
 
-  const { state: playback, errorCode, isMuted, isSoundLocked, toggleSound, togglePlay, reposition } = useFeedPlayer({
+  const { state: playback, errorCode, isMuted, isSoundLocked, leavingKey, beginWithSound, toggleSound, togglePlay, reposition } = useFeedPlayer({
     mountsRef,
     active,
     upcoming,
@@ -367,6 +372,11 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     preconnect("https://i.ytimg.com");
   }, []);
 
+  // A browser allowing sound after all shows up as the first video playing unmuted, which needs no tap.
+  const needsSoundGate = useSyncExternalStore(subscribeToNothing, browserWouldBlockSound, () => false);
+  const [hasPassedGate, setHasPassedGate] = useState(false);
+  const isGateOpen = needsSoundGate && !hasPassedGate && items.length > 0 && !(playback === "playing" && !isMuted);
+
   const isFirstLoad = status === "loading" && items.length === 0;
   const isEmpty = status === "ready" && items.length === 0;
   const hasFailedOnFirstPage = status === "error" && items.length === 0;
@@ -374,8 +384,16 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
   return (
     // The attribute hides the phone top bar, in globals.css, so the video gets that height too.
     <div className="relative flex flex-col" data-immersive-feed>
+      {isGateOpen ? (
+        <SoundGate
+          onStart={() => {
+            setHasPassedGate(true);
+            beginWithSound();
+          }}
+        />
+      ) : null}
       {categories.length > 0 ? (
-        <div role="group" aria-label={strings.feed.tabsLabel} className={cn("flex h-(--feed-tabs-height) items-stretch gap-1 overflow-x-auto px-2 text-white md:justify-center", FEED_IMMERSIVE_OVERLAY ? "absolute inset-x-0 top-0 z-40 bg-linear-to-b from-black/70 to-transparent" : "bg-black")} data-testid="feed-tabs">
+        <div role="group" aria-label={strings.feed.tabsLabel} className={cn("flex h-(--feed-tabs-height) items-stretch gap-1 overflow-x-auto px-2 text-white md:justify-center-safe", FEED_IMMERSIVE_OVERLAY ? "absolute inset-x-0 top-0 z-40 bg-linear-to-b from-black/70 to-transparent" : "bg-black")} data-testid="feed-tabs">
           <div className="flex shrink-0 items-center md:hidden">
             <AccountMenu />
           </div>
@@ -469,6 +487,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
             errorCode={errorCode}
             isMuted={isMuted}
             isSoundLocked={isSoundLocked}
+            isLeaving={leavingKey === `${video.id}:${index}`}
             isSaved={savedIds.has(video.id)}
             notice={notice?.videoId === video.id ? notice.text : null}
             hasPrevious={index > 0}

@@ -84,13 +84,21 @@ Each run works oldest first, within set limits so quota use stays predictable:
 
 Anything past 30 days with nothing fresher is withdrawn the same way, even when the API is off or out of quota. Records and their links stay, so a later refresh restores them.
 
+## Likes and comments
+
+- **Likes and views** are read from what the regular metadata refresh stored, so showing them costs no quota. They appear on video pages and Explore only when `statisticsEnabled` is on, which stays off until the API Compliance Audit confirms it's allowed. Nothing can be liked from this site, as that would need YouTube sign-in scopes, which this project doesn't request.
+- **Comments** cost quota on each load, so they stay on the video page, read-only and fetched when opened. They aren't shown on Explore or in the feed.
+
 ## The player
 
 **The home feed differs from the rest of this section, by the owner's decisions of 2026-11-05 and 2026-11-06.** See [YOUTUBE_COMPLIANCE_AUDIT.md](YOUTUBE_COMPLIANCE_AUDIT.md). This is what it does while those settings are on:
 
 - **Buffering.** Real players sit on the next 4 cards (3 on devices reporting 4 GB of memory or less, 1 with data saver on). YouTube fetches nothing until a video plays, so a player that's merely prepared gains nothing: in an earlier measurement it started in 1.1 to 3.2 seconds, against 0.9 to 1.4 for loading into the existing player. So each plays muted until its first frame, then rewinds and pauses. Measured on the real player, that starts a video in about 0.29 seconds, against 1.04 to 1.77 when it loads on arrival. Those figures are from one desktop machine, on emulated Chromium.
+- **Swiping.** A card starts as soon as 5% of it is visible, and a buffered card's thumbnail goes the moment YouTube reports it playing, with no fade. Measured on the real player, the thumbnail left at 451 ms after a key press, and the card settled at 525 ms, so the video is already running when the swipe ends. Before these changes it left at 614 to 752 ms. YouTube's reaction to `playVideo` is about 0.28 seconds, and can't be shortened from here.
+- **The card being left** keeps running, muted, for up to 0.6 seconds as it slides out, rather than turning back into its thumbnail. Coming back within that time carries on where it was.
+- **Why a buffered card isn't simply shown instead of its thumbnail.** A paused YouTube player shows a dimmed picture with a large play icon, which looks worse. YouTube also shows its own pause icon over a video for a few seconds after it starts, which can't be hidden and which fades by itself.
 - **Fast swipes.** A card with no buffered player shows its thumbnail, which drifts slowly. The spinner stays out of sight for the first 1.2 seconds.
-- **Sound.** On by default, and a person's mute is remembered in the browser. **No browser allows sound before a person has touched the page**, which was measured on the real player: playing unmuted fires `onAutoplayBlocked` and doesn't start, and unmuting a running video pauses it. So the video starts muted when it has to, says "tap for sound", and the first tap or key press anywhere turns it on, with sound on every video after that. If a browser still refuses, the video goes back to muted rather than stopping. Whether sound carries from one player to another on real phones, above all iPhones, **hasn't been tested**.
+- **Sound.** On by default, and a person's mute is remembered in the browser. **No browser allows sound before a person has touched the page**, which was measured on the real player: playing unmuted fires `onAutoplayBlocked` and doesn't start, and unmuting a running video pauses it. So where a browser would refuse, the feed opens on a one-tap welcome screen (`SoundGate`, the owner's decision of 2026-11-06). The first video runs muted behind it, and the tap returns it to the start with sound, and every video after that has sound. Someone who chose to mute isn't asked, and if a browser allows sound anyway, the screen goes by itself. If a browser still refuses, the video goes back to muted with a "tap for sound" hint rather than stopping. Whether sound carries from one player to another on real phones, above all iPhones, **hasn't been tested**.
 
 Everywhere else:
 

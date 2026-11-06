@@ -12,8 +12,6 @@ export { expect };
  */
 const FAKE_IFRAME_API = `
 (() => {
-  window.__ytActivated = false;
-  for (const name of ["click", "keydown"]) window.addEventListener(name, () => { window.__ytActivated = true; }, true);
   window.__ytPlayers = [];
   window.__ytCalls = [];
   window.__ytOptions = [];
@@ -75,6 +73,28 @@ const FAKE_IFRAME_API = `
 })();
 `;
 
+/**
+ * Playwright's own checks count as a person's gesture, which would make the page believe someone had
+ * touched it. This reports only real clicks and key presses, as a browser would for a visitor.
+ */
+export const ONLY_REAL_GESTURES = () => {
+  const target = window as unknown as { __ytActivated: boolean };
+  target.__ytActivated = false;
+  for (const name of ["click", "keydown"]) {
+    window.addEventListener(name, () => {
+      target.__ytActivated = true;
+    }, true);
+  }
+  Object.defineProperty(navigator, "userActivation", {
+    configurable: true,
+    value: {
+      get hasBeenActive() {
+        return target.__ytActivated;
+      },
+    },
+  });
+};
+
 const ONE_PIXEL_GIF = Buffer.from("R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==", "base64");
 
 /** A streamed page briefly exists twice, with the copy still in its hidden holder, until it's swapped in. */
@@ -88,6 +108,15 @@ export const test = base.extend({
     await context.route("https://i.ytimg.com/**", (route) => route.fulfill({ contentType: "image/gif", body: ONE_PIXEL_GIF }));
     // The first-visit notice has tests of its own. Elsewhere it would only shift layouts being measured.
     await context.addInitScript(() => window.localStorage.setItem("privacy-notice.v1", "seen"));
+    await context.addInitScript(ONLY_REAL_GESTURES);
+    // The welcome screen has tests of its own too. Everywhere else it would cover what's being tested.
+    await context.addInitScript(() => {
+      try {
+        if (!window.sessionStorage.getItem("keep-default-sound")) window.localStorage.setItem("feed.sound", "off");
+      } catch {
+        // The stub's blank frames have no storage, and don't need it.
+      }
+    });
     await provide(context);
   },
 });

@@ -21,6 +21,7 @@ export function useFeedPlayerPool({ mountsRef, active, upcoming, isInView, place
   const [playback, setPlayback] = useState<{ videoId: string | null; state: PlaybackState; errorCode: number | null }>({ videoId: null, state: "idle", errorCode: null });
   const [isMuted, setIsMuted] = useState(true);
   const [isSoundLocked, setIsSoundLocked] = useState(false);
+  const [leavingKey, setLeavingKey] = useState<string | null>(null);
 
   const poolRef = useRef<FeedPlayerPool | null>(null);
   const latestRef = useRef({ place, onWatchFinished, active, upcoming, isInView });
@@ -35,6 +36,7 @@ export function useFeedPlayerPool({ mountsRef, active, upcoming, isInView, place
       onPlayback: (videoId, state, errorCode) => setPlayback({ videoId, state, errorCode }),
       onMuted: setIsMuted,
       onSoundLocked: setIsSoundLocked,
+      onLeaving: setLeavingKey,
       onWatchFinished: (videoId, watch) => latestRef.current.onWatchFinished(videoId, watch),
     });
     poolRef.current = pool;
@@ -60,6 +62,8 @@ export function useFeedPlayerPool({ mountsRef, active, upcoming, isInView, place
     errorCode: isCurrent ? playback.errorCode : null,
     isMuted,
     isSoundLocked,
+    leavingKey,
+    beginWithSound: useCallback(() => poolRef.current?.beginWithSound(), []),
     toggleSound: useCallback(() => poolRef.current?.toggleSound(), []),
     togglePlay: useCallback(() => poolRef.current?.togglePlay(), []),
     reposition: useCallback(() => poolRef.current?.reposition(), []),

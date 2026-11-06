@@ -4,13 +4,18 @@ import { objectIdSchema } from "@/features/categories/schemas";
 import { articleCardSelect, topicCardSelect, type TopicCardData } from "@/features/content/cards";
 import { publicContentFilter } from "@/features/content/common";
 import { resolveInOrder, type ResolvedContent } from "@/features/content/resolve";
+import { getFeedPage } from "@/features/shorts/feed.service";
+import type { FeedPage } from "@/features/shorts/types";
 import { publicVideoFilter, toVideoCards, videoCardSelect } from "@/features/shorts/video-cards";
 import { playlistCardSelect, publicPlaylistFilter } from "@/features/playlists/playlist-filters";
 import { libraryCardSelect } from "@/features/content/cards";
+import { AppError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 
-const SECTION_LIMIT = 6;
-const SHORTS_LIMIT = 10;
+const SECTION_LIMIT = 12;
+const SHORTS_LIMIT = 12;
+const NEW_LIMIT = 8;
+const MAX_VIDEOS_PER_REQUEST = 48;
 const MS_PER_DAY = 86_400_000;
 
 /** Below these, a "popular" list would describe a handful of people, so it isn't shown (§11.3). */
@@ -35,8 +40,8 @@ export async function getExploreSections() {
     }),
     prisma.playlist.findMany({ where: { ...publicPlaylistFilter, isFeatured: true }, orderBy: [{ displayOrder: "asc" }, { id: "desc" }], take: SECTION_LIMIT, select: playlistCardSelect }),
     prisma.article.findMany({ where: { ...publicContentFilter, isFeatured: true }, orderBy: { publishedAt: "desc" }, take: SECTION_LIMIT, select: articleCardSelect }),
-    prisma.article.findMany({ where: publicContentFilter, orderBy: { publishedAt: "desc" }, take: 3, select: articleCardSelect }),
-    prisma.video.findMany({ where: { ...publicVideoFilter, kind: "LONG_FORM" }, orderBy: { publishedAt: "desc" }, take: 3, select: videoCardSelect }),
+    prisma.article.findMany({ where: publicContentFilter, orderBy: { publishedAt: "desc" }, take: NEW_LIMIT, select: articleCardSelect }),
+    prisma.video.findMany({ where: { ...publicVideoFilter, kind: "LONG_FORM" }, orderBy: { publishedAt: "desc" }, take: NEW_LIMIT, select: videoCardSelect }),
     prisma.video.findMany({ where: { ...publicVideoFilter, kind: "SHORT" }, orderBy: { publishedAt: "desc" }, take: SHORTS_LIMIT, select: videoCardSelect }),
   ]);
 
@@ -52,6 +57,24 @@ export async function getExploreSections() {
     articles,
     newContent: { articles: newArticles, longVideos, shorts },
   };
+}
+
+const exploreVideosSchema = z.object({
+  kind: z.enum(["SHORT", "LONG_FORM"]),
+  categoryId: objectIdSchema.nullish(),
+  cursor: z.string().nullish(),
+  size: z.number().int().min(1).max(MAX_VIDEOS_PER_REQUEST),
+});
+
+/**
+ * A page of everything published, with channels spread out by the feed's own planner. It's asked
+ * as nobody in particular, so Explore stays the same for everyone and never turns into For You (§16).
+ */
+export async function listExploreVideos(rawInput: unknown): Promise<FeedPage> {
+  const parsed = exploreVideosSchema.safeParse(rawInput);
+  if (!parsed.success) throw new AppError("VALIDATION");
+  const { kind, categoryId, cursor, size } = parsed.data;
+  return getFeedPage(null, { kind, categoryId, cursor }, size);
 }
 
 /**

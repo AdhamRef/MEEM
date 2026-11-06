@@ -32,7 +32,7 @@ function RailAction({ label, children }: { label?: string; children: ReactNode }
  * own interface stays out of sight and swiping works. See FEED_IMMERSIVE_OVERLAY.
  */
 export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function ImmersiveFeedCard(
-  { video, isActive, isUpcoming, isNext, playback, errorCode, isMuted, isSoundLocked = false, isSaved, notice, hasPrevious, hasNext, onToggleSound, onTapVideo, onPrevious, onNext, onSavedChange, onNotice, slotRef },
+  { video, isActive, isUpcoming, isNext, playback, errorCode, isMuted, isSoundLocked = false, isLeaving = false, isSaved, notice, hasPrevious, hasNext, onToggleSound, onTapVideo, onPrevious, onNext, onSavedChange, onNotice, slotRef },
   ref,
 ) {
   const message = isActive ? (statusMessage(playback, errorCode) ?? notice) : null;
@@ -41,7 +41,7 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
   const ratio = feedVideoRatio(video);
   const isWide = ratio > 1;
   // The thumbnail stays until the first frame, so nobody sees a loading player.
-  const showPoster = !isActive || (playback !== "playing" && playback !== "paused");
+  const showPoster = !isLeaving && (!isActive || (playback !== "playing" && playback !== "paused"));
   // Only on the card that's waiting, and its styles keep it out of sight unless the wait gets long.
   const showLoader = isActive && (playback === "loading" || playback === "idle");
 
@@ -75,9 +75,8 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
               data-testid="feed-poster"
               data-visible={showPoster}
               // Above the player, at the video's own size. YouTube's thumbnails have bars around a
-              // vertical video, which cropping to its shape removes. It fades only on the way out:
-              // fading in would show black on the card being swiped away, once the player has left it.
-              className={cn("absolute inset-0 z-20 m-auto aspect-(--r) w-[min(100%,calc(100cqh*var(--r)))] object-cover", (isActive || isNext) && showPoster && "feed-poster-drift", showPoster ? "opacity-100" : "pointer-events-none opacity-0 transition-opacity duration-150")}
+              // vertical video, which cropping to its shape removes. It goes at once, with no fade.
+              className={cn("absolute inset-0 z-20 m-auto aspect-(--r) w-[min(100%,calc(100cqh*var(--r)))] object-cover", (isActive || isNext) && showPoster && "feed-poster-drift", showPoster ? "opacity-100" : "pointer-events-none opacity-0")}
             />
           ) : showPoster ? (
             <div aria-hidden className="absolute inset-0 z-20 bg-black" />

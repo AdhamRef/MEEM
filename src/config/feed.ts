@@ -19,16 +19,20 @@ export const FEED_CROP_PIXELS = 140;
 
 /**
  * A card counts as active at this share visible. YouTube requires over half before autoplay, so
- * that's what the compliant layout uses. The immersive one starts on the way in, so most of the
- * loading happens during the swipe. Scrolling back is handled when scrolling settles.
+ * that's what the compliant layout uses. The immersive one starts as soon as a finger moves, so the
+ * video is already running by the time the card has settled. Scrolling back is handled when scrolling settles.
  */
-export const FEED_ACTIVE_THRESHOLD = FEED_IMMERSIVE_OVERLAY ? 0.15 : 0.6;
+export const FEED_ACTIVE_THRESHOLD = FEED_IMMERSIVE_OVERLAY ? 0.05 : 0.6;
 /** Below this share visible, the playing video pauses. */
 export const FEED_PAUSE_THRESHOLD = 0.5;
 /** Fetches the next page while this many cards are still ahead. */
 export const FEED_LOAD_AHEAD = 6;
+/** How many of each kind Explore's grid asks for at a time. */
+export const EXPLORE_LONG_PAGE = 24;
+export const EXPLORE_SHORTS_PAGE = 12;
+
 /** Thumbnails loaded ahead of the active card, which is further than players are buffered. */
-export const FEED_PRELOAD_THUMBNAILS = 6;
+export const FEED_PRELOAD_THUMBNAILS = 5;
 
 /**
  * OWNER'S DECISION, 2026-11-06, made knowing it breaks YouTube's rules: real players stay buffered

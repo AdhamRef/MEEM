@@ -14,6 +14,17 @@ async function openFeed(page: Page, path = "/") {
 }
 
 /** The player on screen. Others stay buffered on the cards coming up. */
+/** Undoes the test default of having muted, so this test sees what a new visitor does. */
+async function withDefaultSound(page: Page) {
+  await page.addInitScript(() => {
+    window.sessionStorage.setItem("keep-default-sound", "1");
+    if (window.sessionStorage.getItem("keep-default-sound-set") === null) {
+      window.sessionStorage.setItem("keep-default-sound-set", "1");
+      window.localStorage.removeItem("feed.sound");
+    }
+  });
+}
+
 function activeFrame(page: Page) {
   return page.locator('[data-player-role="active"] iframe');
 }
@@ -64,7 +75,8 @@ test.describe("playback rules", () => {
       return players
         .filter((player) => !player.__frame.closest('[data-player-role="active"]'))
         .map((player) => {
-          const frame = player.__frame.getBoundingClientRect();
+          // The player's window, since the frame itself runs past it and is cropped.
+          const frame = player.__frame.closest('[data-testid="player-mount"]')!.getBoundingClientRect();
           return { isMuted: player.isMuted(), isOnScreen: frame.top < box.bottom && frame.bottom > box.top, isInert: Boolean(player.__frame.closest("[inert]")) };
         });
     });
@@ -83,12 +95,13 @@ test.describe("playback rules", () => {
     await page.waitForTimeout(500);
 
     const second = await page.getByTestId("feed-card").nth(1).getAttribute("data-video-id");
-    const before = (await calls(page)).filter((call) => call.name === "loadVideoById").length;
     await moveNext(page);
     await expect.poll(() => activeCard(page)).toBe(second);
     await expect(page.getByTestId("feed-card").nth(1).getByTestId("feed-poster")).toHaveAttribute("data-visible", "false", { timeout: 5000 });
-    expect((await calls(page)).filter((call) => call.name === "loadVideoById").length).toBe(before);
     await expect(activeFrame(page)).toHaveCount(1);
+    // It was already loaded, so its own video was never loaded again.
+    const shown = await activeFrameVideo(page);
+    expect((await calls(page)).filter((call) => call.name === "loadVideoById" && call.arg === shown)).toEqual([]);
   });
 
   test("the number of players stays capped however far someone goes", async ({ page }) => {
@@ -121,22 +134,33 @@ test.describe("playback rules", () => {
     expect(lastCalls[0]?.name).toBe("pauseVideo");
   });
 
-  test("sound is on by default: where the browser blocks it the video still plays, and the first touch brings it", async ({ page }) => {
-    await openFeed(page);
-    const hint = page.getByTestId("sound-hint");
-    await expect(hint).toBeVisible();
-    await expect(hint).toContainText("اضغط لتشغيل الصوت");
+  test("a first visit opens on a welcome screen, and its one tap starts the video from the top with sound", async ({ page }) => {
+    await withDefaultSound(page);
+    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+    await page.goto("/");
+    const gate = page.getByTestId("sound-gate");
+    await expect(gate).toBeVisible({ timeout: 15_000 });
+    await expect(gate).toContainText("ابدأ المشاهدة");
+    await expect(activeFrame(page)).toHaveCount(1, { timeout: 15_000 });
     await expect.poll(async () => (await calls(page)).some((call) => call.name === "playVideo")).toBeTruthy();
 
-    await page.getByTestId("feed-tabs").getByRole("button").last().hover();
-    await page.mouse.click(5, 300);
-    await expect(hint).toHaveCount(0);
-    expect((await calls(page)).some((call) => call.name === "unMute")).toBe(true);
+    await gate.click();
+    await expect(gate).toHaveCount(0);
+    await expect.poll(async () => (await calls(page)).some((call) => call.name === "unMute")).toBeTruthy();
+    expect((await calls(page)).some((call) => call.name === "seekTo" && call.arg === 0)).toBe(true);
+    await expect(page.getByTestId("sound-hint")).toHaveCount(0);
+  });
+
+  test("someone who chose to mute isn't asked", async ({ page }) => {
+    await openFeed(page);
+    await expect(page.getByTestId("sound-gate")).toHaveCount(0);
   });
 
   test("sound stays on for each video after that, and a chosen mute is remembered", async ({ page }) => {
-    await openFeed(page);
-    await page.mouse.click(5, 300);
+    await withDefaultSound(page);
+    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+    await page.goto("/");
+    await page.getByTestId("sound-gate").click({ timeout: 15_000 });
     await expect(page.getByTestId("sound-hint")).toHaveCount(0);
     const unmutes = (await calls(page)).filter((call) => call.name === "unMute").length;
 
@@ -146,6 +170,7 @@ test.describe("playback rules", () => {
 
     await page.keyboard.press("m");
     await expect.poll(() => page.evaluate(() => window.localStorage.getItem("feed.sound"))).toBe("off");
+    await page.evaluate(() => window.sessionStorage.setItem("keep-default-sound", "1"));
     await page.reload();
     await expect(activeFrame(page)).toHaveCount(1, { timeout: 15_000 });
     await page.waitForTimeout(300);
@@ -154,16 +179,26 @@ test.describe("playback rules", () => {
     expect(vars.mute).toBe(1);
   });
 
-  test("a refused unmute falls back to muted playback rather than stopping the video", async ({ page }) => {
-    await openFeed(page);
+  test("a refused unmute falls back to muted playback, says so, and doesn't stop the video", async ({ page }) => {
+    await withDefaultSound(page);
+    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+    // The browser reports past activity while the player still refuses, as can happen on phones.
+    await page.addInitScript(() => Object.defineProperty(navigator, "userActivation", { value: { hasBeenActive: true }, configurable: true }));
+    await page.goto("/");
+    await expect(activeFrame(page)).toHaveCount(1, { timeout: 15_000 });
     await expect(page.getByTestId("sound-hint")).toBeVisible();
-    // Pretends the browser reports past activity while the player still refuses, as can happen on phones.
-    await page.evaluate(() => Object.defineProperty(navigator, "userActivation", { value: { hasBeenActive: true }, configurable: true }));
-    await page.evaluate(() => Object.assign(window, { __ytActivated: false }));
-    await page.keyboard.press("ArrowDown");
-    await page.evaluate(() => Object.assign(window, { __ytActivated: false }));
     await expect(page.locator('[data-testid="paused-indicator"]')).toHaveCount(0);
-    await expect(activeFrame(page)).toHaveCount(1);
+    await expect(page.getByTestId("feed-poster").first()).toHaveAttribute("data-visible", "false");
+  });
+
+  test("the card being left keeps its picture while it slides out, and only then goes back to its thumbnail", async ({ page }) => {
+    await openFeed(page);
+    const cards = page.getByTestId("feed-card");
+    await expect(cards.first().getByTestId("feed-poster")).toHaveAttribute("data-visible", "false");
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(async () => (await page.getByTestId("feed-poster").nth(1).getAttribute("data-visible")) === "false").toBeTruthy();
+    // The two are uncovered together for a moment, which is the whole point.
+    await expect(cards.first().getByTestId("feed-poster")).toHaveAttribute("data-visible", "true", { timeout: 3000 });
   });
 
   // The owner's decision of 2026-11-05: see FEED_IMMERSIVE_OVERLAY. This describes that layout.
@@ -209,16 +244,13 @@ test.describe("playback rules", () => {
     await expect(page.getByTestId("feed-card").first().getByTestId("video-loader")).toHaveCount(0);
   });
 
-  test("moving on shows the thumbnail and our loader until the time moves, then nothing on top", async ({ page }) => {
+  test("moving onto a card that isn't buffered shows the thumbnail and loader until the time moves, then nothing on top", async ({ page }) => {
+    // Held from the start, so the next card can't have finished buffering.
+    await page.addInitScript(() => Object.assign(window, { __ytHoldFirstFrame: true }));
     await openFeed(page);
     const cards = page.getByTestId("feed-card");
-    await expect(cards.first().getByTestId("video-loader")).toHaveCount(0);
-    // Waiting ahead, before the swipe that reveals it.
-    await expect(cards.nth(1).getByTestId("video-loader")).toBeAttached();
+    await expect(cards.first().getByTestId("video-loader")).toHaveCount(0, { timeout: 5000 });
 
-    await page.evaluate(() => {
-      (window as unknown as { __ytHoldFirstFrame: boolean }).__ytHoldFirstFrame = true;
-    });
     await moveNext(page);
     const next = cards.nth(1);
     await expect(next.getByTestId("video-tap")).toBeEnabled();
@@ -238,6 +270,8 @@ test.describe("playback rules", () => {
   });
 
   test("a video that never starts ends in a play button, not an endless loader", async ({ page }) => {
+    // Muted by choice, so this pause can't be taken for the browser refusing sound.
+    await page.addInitScript(() => window.localStorage.setItem("feed.sound", "off"));
     await openFeed(page);
     await page.evaluate(() => {
       (window as unknown as { __ytHoldFirstFrame: boolean }).__ytHoldFirstFrame = true;
@@ -305,13 +339,21 @@ test.describe("playback rules", () => {
       }, share);
 
     const first = await activeFrameVideo(page);
-    // Only a fifth of the next card is showing, and it's already loading.
+    // Scrolling that stops settles back within moments, so this records each change as it happens.
+    await page.evaluate(() => {
+      const seen: (string | null)[] = [];
+      new MutationObserver(() => seen.push(document.querySelector('[data-player-role="active"] iframe')?.getAttribute("data-video-id") ?? null)).observe(document.querySelector('[data-testid="feed-scroller"]')!, { attributes: true, attributeFilter: ["data-player-role"], subtree: true });
+      Object.assign(window, { __activeSeen: seen });
+    });
+    const seen = () => page.evaluate(() => (window as unknown as { __activeSeen: (string | null)[] }).__activeSeen);
+
+    // Only a fifth of the next card is showing, and it has already started.
     await scrollTo(0.2);
-    await expect.poll(() => activeFrameVideo(page)).not.toBe(first);
-    expect(await activeFrame(page).count()).toBe(1);
+    await expect.poll(async () => (await seen()).some((video) => video !== null && video !== first)).toBeTruthy();
 
     await scrollTo(0);
-    await expect.poll(async () => (await calls(page)).filter((call) => call.name === "loadVideoById").at(-1)?.arg).toBe(first);
+    await expect.poll(() => activeFrameVideo(page)).toBe(first);
+    expect(await activeFrame(page).count()).toBe(1);
   });
 
   test("nothing plays in the background", async ({ page }) => {
@@ -365,7 +407,7 @@ test.describe("playback rules", () => {
     const sound = page.locator('article:has([data-testid="card-status"]) [data-testid="sound"]:not([disabled])').first();
     await expect(sound).toHaveAttribute("aria-label", "تشغيل الصوت");
     await sound.click();
-    expect((await calls(page)).at(-1)?.name).toBe("unMute");
+    await expect.poll(async () => (await calls(page)).some((call) => call.name === "unMute")).toBeTruthy();
 
     await moveNext(page);
     await expect.poll(async () => (await calls(page)).filter((call) => call.name === "unMute").length).toBeGreaterThanOrEqual(2);
@@ -438,14 +480,29 @@ test.describe("the feed content", () => {
 
     await page.getByTestId("feed-tabs").getByRole("button", { name: "لك", exact: true }).click();
     await expect(page.getByTestId("feed-tabs").getByRole("button", { name: "لك", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator("iframe")).toHaveCount(1);
+    await expect(activeFrame(page)).toHaveCount(1);
+  });
+
+  test("the first tab stays reachable when there are more tabs than fit", async ({ page }) => {
+    const created = await Promise.all(Array.from({ length: 30 }, (_, index) => prisma.category.create({ data: { title: `مجال طويل الاسم للتجربة ${index} ${randomUUID().slice(0, 4)}`, slug: `many-tabs-${randomUUID()}` } })));
+    try {
+      await openFeed(page);
+      const forYou = page.getByTestId("feed-tabs").getByRole("button", { name: "لك", exact: true });
+      await page.getByTestId("feed-tabs").getByRole("button", { name: created[29]!.title }).click();
+      await forYou.click();
+      await expect(forYou).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      await prisma.category.deleteMany({ where: { id: { in: created.map((category) => category.id) } } });
+    }
   });
 
   test("a category with nothing in it says so", async ({ page }) => {
     await openFeed(page);
     await page.getByTestId("feed-tabs").getByRole("button", { name: "الآداب الإسلامية" }).click();
     await expect(page.getByText("لا توجد مقاطع منشورة في هذا المجال بعد.")).toBeVisible();
-    await expect(page.locator("iframe")).toHaveCount(0);
+    // Nothing active, and no player left sitting over the message.
+    await expect(activeFrame(page)).toHaveCount(0);
+    await expect(page.locator('[data-testid="player-mount"]:visible')).toHaveCount(0);
   });
 
   test("shows an honest empty state with no videos", async ({ page }) => {
@@ -476,7 +533,7 @@ test.describe("the feed content", () => {
     await page.getByTestId("feed-scroller").evaluate((element) => {
       element.scrollTop = element.clientHeight;
     });
-    await expect(page.locator("iframe")).toHaveCount(1);
+    await expect(activeFrame(page)).toHaveCount(1);
   });
 
   test("a guest's interests shape the feed they see", async ({ page }) => {
@@ -597,7 +654,7 @@ test.describe("CTAs, saving, and sharing", () => {
     await prisma.userPreference.create({ data: { userId: account.id, onboardingSkipped: true } });
 
     await page.goto("/");
-    await expect(page.locator("iframe")).toHaveCount(1);
+    await expect(activeFrame(page)).toHaveCount(1);
     await expect.poll(async () => (await calls(page)).some((call) => call.name === "playVideo")).toBeTruthy();
 
     await fire(page, "__fireState", 0);
@@ -649,7 +706,7 @@ test.describe("shareable pages", () => {
     expect(vars).toMatchObject({ autoplay: 0, controls: 1 });
     await expect(page.getByTestId("youtube-attribution")).toContainText("المصدر: YouTube");
 
-    const box = await activeFrame(page).boundingBox();
+    const box = await page.locator("iframe").boundingBox();
     expect(box!.width).toBeGreaterThanOrEqual(200);
     expect(box!.height).toBeGreaterThanOrEqual(200);
   });
@@ -769,7 +826,7 @@ test.describe("layout and accessibility", () => {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(0);
 
-      const box = await page.locator("iframe").boundingBox();
+      const box = await page.locator('[data-player-role="active"] iframe').boundingBox();
       expect(box!.width).toBeGreaterThanOrEqual(200);
       expect(box!.height).toBeGreaterThanOrEqual(200);
 
@@ -841,11 +898,11 @@ test.describe("sizing the video to the screen", () => {
   });
 });
 
-test("loads the next five thumbnails ahead, and creates only one player", async ({ page }) => {
+test("loads the next five thumbnails ahead", async ({ page }) => {
   await page.goto("/");
   const cards = page.getByTestId("feed-card");
   await cards.first().waitFor();
-  await expect(page.locator("iframe")).toHaveCount(1);
+  await expect(activeFrame(page)).toHaveCount(1);
   const count = await cards.count();
   const eager = await page.locator('[data-testid="feed-poster"][loading="eager"]').count();
   // The active card, and the five after it.

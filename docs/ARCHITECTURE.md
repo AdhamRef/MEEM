@@ -187,6 +187,10 @@ score = explicit weight × selected interest weight + behaviour score decayed ov
 
 Signed-in people's interests come from their account. Guests' come from browser storage as request hints, which are validated and bounded. A guest's watching stays in the browser until they sign in.
 
+### Explore
+
+`/explore` is laid out like a video site's home page: search and category chips stay at the top, and `ExploreFeed` loads videos as people scroll, with a row of Shorts and an editorial shelf between each stretch. Once long videos run out, Shorts carry on as a grid, so everything published can be reached. `listExploreVideos` asks `getFeedPage` as nobody in particular, so channels stay spread out and the page is the same for everyone (§16). It starts no playback by itself.
+
 ### The player
 
 **The home feed's player differs by the owner's decisions of 2026-11-05 and 2026-11-06, and `FeedPlayerPool` (`src/lib/youtube/feed-player-pool.ts`) manages it.** One player is active. Others wait buffered on the coming cards, primed one at a time, nearest first, once the active video has started. See [YOUTUBE_INTEGRATION.md](YOUTUBE_INTEGRATION.md). `FEED_BUFFER_AHEAD` turns this off, which puts the feed back on `useActivePlayer`, described below.

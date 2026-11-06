@@ -35,6 +35,8 @@ export type SessionFeedHints = z.infer<typeof sessionHintsSchema>;
 export interface FeedRequest {
   cursor?: string | null;
   categoryId?: string | null;
+  /** Shorts unless asked otherwise. */
+  kind?: "SHORT" | "LONG_FORM";
   /** Used only for guests. Signed-in people's interests always come from their account. */
   guest?: GuestFeedHints;
   /** What happened during this visit, for anyone. It only reorders their own feed, and isn't stored. */
@@ -57,10 +59,10 @@ const NO_VALUE = (field: "categoryId" | "channelId") => ({ OR: [{ [field]: null 
  * around to just below it. A count of what's been read is enough, since (feedKey, id) is a
  * stable order, and it keeps the cursor small however long the session runs.
  */
-async function readPool(pool: VideoPool, startKey: number, alreadyRead: number, take: number): Promise<VideoCardRow[]> {
+async function readPool(pool: VideoPool, kind: "SHORT" | "LONG_FORM", startKey: number, alreadyRead: number, take: number): Promise<VideoCardRow[]> {
   const where: Prisma.VideoWhereInput = {
     ...publicVideoFilter,
-    kind: "SHORT",
+    kind,
     AND: [pool.categoryId === UNCATEGORIZED_FEED_ID ? NO_VALUE("categoryId") : { categoryId: pool.categoryId }, pool.channelId === null ? NO_VALUE("channelId") : { channelId: pool.channelId }],
   };
   const order: Prisma.VideoOrderByWithRelationInput[] = [{ feedKey: "asc" }, { id: "asc" }];
@@ -74,11 +76,11 @@ async function readPool(pool: VideoPool, startKey: number, alreadyRead: number, 
 }
 
 /** What's published, by category and channel. It reads only these counts, never the videos. */
-async function loadPools(categoryIds: string[], onlyCategoryId: string | null): Promise<VideoPool[]> {
+async function loadPools(categoryIds: string[], onlyCategoryId: string | null, kind: "SHORT" | "LONG_FORM"): Promise<VideoPool[]> {
   // Raw, because Prisma's groupBy panics on MongoDB when a grouped field is missing from a document.
   const raw = await prisma.video.aggregateRaw({
     pipeline: [
-      { $match: { ...publicVideoFilter, kind: "SHORT", ...(onlyCategoryId ? { categoryId: { $oid: onlyCategoryId } } : {}) } },
+      { $match: { ...publicVideoFilter, kind, ...(onlyCategoryId ? { categoryId: { $oid: onlyCategoryId } } : {}) } },
       { $group: { _id: { category: "$categoryId", channel: "$channelId" }, count: { $sum: 1 } } },
     ],
   });
@@ -158,7 +160,8 @@ export async function getFeedPage(actor: Actor | null, request: FeedRequest, pag
   const categoryMomentum = clampMomentum(session?.data.categories ?? {});
   const channelMomentum = clampMomentum(session?.data.channels ?? {});
 
-  const allPools = await loadPools(categoryIds, onlyCategoryId);
+  const kind = request.kind ?? "SHORT";
+  const allPools = await loadPools(categoryIds, onlyCategoryId, kind);
   const readCount = (pool: VideoPool) => cursor.o[poolKey(pool.categoryId, pool.channelId)] ?? 0;
   const pools = allPools.map((pool) => ({ ...pool, remaining: Math.max(0, pool.remaining - readCount(pool)) })).filter((pool) => pool.remaining > 0);
 
@@ -192,7 +195,7 @@ export async function getFeedPage(actor: Actor | null, request: FeedRequest, pag
   const readRows = new Map<string, VideoCardRow[]>();
   await Promise.all(
     [...wanted].map(async ([key, { pool, count }]) => {
-      readRows.set(key, await readPool(pool, cursor.s, positions[key] ?? 0, count));
+      readRows.set(key, await readPool(pool, kind, cursor.s, positions[key] ?? 0, count));
     }),
   );
   for (const [key, { count }] of wanted) positions[key] = (positions[key] ?? 0) + count;

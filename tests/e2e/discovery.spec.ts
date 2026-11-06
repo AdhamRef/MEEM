@@ -96,7 +96,7 @@ test.describe("explore", () => {
     await open(page, "/explore");
     await expect(page.getByTestId("explore-page")).toBeVisible();
 
-    await expect(page.getByTestId("section-categories").getByRole("link", { name: category.title })).toHaveAttribute("href", /\/topics\?category=/);
+    await expect(page.getByTestId("section-categories").getByRole("link", { name: category.title })).toHaveAttribute("href", /\/explore\?category=/);
     await expect(page.getByTestId("section-featured-topics").getByText(topic.title)).toBeVisible();
     await expect(page.getByTestId("section-selected-articles").getByText(article.title)).toBeVisible();
     await expect(page.getByTestId("section-libraries").getByText(library.name)).toBeVisible();

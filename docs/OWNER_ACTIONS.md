@@ -24,6 +24,8 @@ If you only have one kind of phone, send that one's results, and find the other 
 Please also try the real feed on each phone, with a few videos published, and tell me:
 
 - [ ] Does swiping to the next video feel instant?
+- [ ] Does the welcome screen's tap start the first video with sound?
+- [ ] Is YouTube's pause icon, shown briefly over each video as it starts, acceptable? I can't remove it from here.
 - [ ] After your first tap, does the sound stay on as you swipe to the next videos? **iPhone may not allow this with several players.** If it doesn't, we'd need to choose between sound and buffering there.
 - [ ] Does the phone stay smooth and cool after a few minutes, with up to 5 players loaded?
 
@@ -88,6 +90,8 @@ I can prepare the material, but these need you, and some need a person qualified
 
 ### Legal and compliance
 
+- [ ] **Explore now looks much like YouTube's home page, by your decision of 2026-11-06.** That adds to the project's largest risk (R1). Have it in mind for the audit.
+- [ ] **Likes and view counts are built but off** until the audit confirms they're allowed. Showing them costs no extra quota. Comments do cost quota, so they stay on the video page.
 - [ ] **The feed currently breaks YouTube's rules, by your decisions of 2026-11-05 and 2026-11-06:** the overlay, and the hidden buffered players. Set `FEED_IMMERSIVE_OVERLAY` to false in `src/config/feed.ts` before applying for the audit, or if YouTube contacts you, which turns both off. See [YOUTUBE_COMPLIANCE_AUDIT.md](YOUTUBE_COMPLIANCE_AUDIT.md).
 - [ ] **Apply for the YouTube API Compliance Audit.** This is the project's largest risk, since whether a multi-channel feed is allowed is unresolved (R1). Launching before clearance risks losing API access. I'll prepare the submission material in Phase 9. Permission from channel owners would also help.
 - [ ] **Who is responsible for the site:** a name or legal entity, and a country

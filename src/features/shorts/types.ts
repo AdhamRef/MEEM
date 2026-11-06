@@ -20,6 +20,8 @@ export interface VideoCard {
   cta: VideoCardCta | null;
   /** Only when statistics are enabled and YouTube returned one. Never filled in. */
   viewCount: number | null;
+  /** The same, for likes. It's read from what the regular refresh stored, so showing it costs no quota. */
+  likeCount: number | null;
 }
 
 export interface VideoCardCta {

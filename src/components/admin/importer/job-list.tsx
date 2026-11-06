@@ -272,7 +272,7 @@ export function JobList({ jobs: serverJobs }: { jobs: JobRow[] }) {
             { label: t.imported, value: job.importedCount },
           ];
           return (
-            <li key={job.id} className={`flex flex-col gap-3 rounded-2xl border bg-surface p-4 transition-colors ${activity === "RUNNING_HERE" ? "border-brand" : ""}`} data-testid="job-row" data-job-status={job.status}>
+            <li key={job.id} className={`flex min-w-0 flex-col gap-3 rounded-2xl border bg-surface p-4 transition-colors ${activity === "RUNNING_HERE" ? "border-brand" : ""}`} data-testid="job-row" data-job-status={job.status}>
               <div className="flex items-start gap-3">
                 <ChannelAvatar url={job.channelImage} className="size-12" />
                 <div className="min-w-0 flex-1">

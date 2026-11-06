@@ -46,6 +46,8 @@ Transparent, category-based scoring, with weights set in the dashboard: chosen i
 | Certain Shorts detection | Length gives a candidate, and a person decides | The API has no such flag (L5) |
 | Posting YouTube comments | Read-only, labelled as YouTube's | Posting would need YouTube authorisation, which isn't requested (L6) |
 | Resume in YouTube playlists | Best effort, from what was seen playing here | Progress is only visible while playing on this site (L7) |
+| Explore should "avoid a cluttered page with endless unrelated cards" (§16) | Explore is a video-site-style page that keeps loading as people scroll. All the editorial sections §16 lists are still there, as shelves between the videos. Likes, internal comments, and follows stay out (§29). | The owner's decision of 2026-11-06, because Explore showed too few videos |
+| Sound starts muted (L3) | The feed opens on a one-tap welcome screen where a browser would refuse sound, so the first video is heard from its start | The owner's decision of 2026-11-06 |
 | `/c/` channel addresses | Asks for the `@handle` | The API has no direct lookup, and search costs 100 quota units (L8) |
 | A `Short` model | One `Video` model with a kind | Playlists and topics need both kinds, and duplicates are prevented across them (D3) |
 | Statistics | Built, and off | YouTube limits storing them, until the audit says otherwise (D6, R2) |

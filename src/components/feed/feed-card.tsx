@@ -25,6 +25,8 @@ export interface FeedCardProps {
   isMuted: boolean;
   /** Sound is wanted, but the browser won't allow it until the person touches the page. */
   isSoundLocked?: boolean;
+  /** Sliding away while still running, so it keeps its picture rather than its thumbnail. */
+  isLeaving?: boolean;
   isSaved: boolean;
   notice: string | null;
   hasPrevious: boolean;

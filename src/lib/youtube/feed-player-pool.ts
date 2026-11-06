@@ -15,10 +15,12 @@ export interface PoolEvents {
   onMuted: (isMuted: boolean) => void;
   /** True while sound is wanted but the browser won't allow it until the person acts. */
   onSoundLocked: (isLocked: boolean) => void;
+  /** The card sliding away, still running so it doesn't turn back into its thumbnail on the way out. */
+  onLeaving: (key: string | null) => void;
   onWatchFinished: (videoId: string, watch: Omit<WatchSummary, "durationSeconds"> & { timesEnded: number }) => void;
 }
 
-type Phase = "empty" | "priming" | "primed" | "active";
+type Phase = "empty" | "priming" | "primed" | "active" | "leaving";
 
 interface Slot {
   mount: HTMLElement;
@@ -29,6 +31,8 @@ interface Slot {
   videoId: string | null;
   /** What the player itself holds, which can lag behind what it's assigned. */
   loadedVideoId: string | null;
+  /** It has really shown this video's picture, so its card needs no thumbnail once it plays. */
+  hasFrame: boolean;
   phase: Phase;
   errorCode: number | null;
   usedAt: number;
@@ -52,10 +56,12 @@ const FIRST_FRAME_GIVE_UP_MS = 2500;
 const PRIMING_GIVE_UP_MS = 6000;
 /** Buffering waits this long for the card on screen to start, as it shouldn't compete with it. */
 const PRIMING_WAITS_FOR_ACTIVE_MS = 1500;
+/** Longer than a swipe takes to settle. The card left behind keeps moving, muted, until it's out of sight. */
+const LEAVING_MS = 600;
 /** Measured on the real player: a refused unMute pauses the video within about this time. */
 const SOUND_REFUSAL_WINDOW_MS = 2000;
 
-function readSoundPreference(): boolean {
+export function readSoundPreference(): boolean {
   try {
     return window.localStorage.getItem(SOUND_PREFERENCE_KEY) !== "off";
   } catch {
@@ -71,7 +77,7 @@ function saveSoundPreference(isOn: boolean): void {
   }
 }
 
-const hasBrowserActivation = () => navigator.userActivation?.hasBeenActive === true;
+export const hasBrowserActivation = () => navigator.userActivation?.hasBeenActive === true;
 
 /**
  * OWNER'S DECISION, 2026-11-06, made knowing it breaks YouTube's rules: the feed keeps real players
@@ -98,12 +104,14 @@ export class FeedPlayerPool {
   private stopFirstFrameCheck: (() => void) | null = null;
   private loadingGiveUp: ReturnType<typeof setTimeout> | null = null;
   private primingWait: ReturnType<typeof setTimeout> | null = null;
+  private leavingSlot: Slot | null = null;
+  private leavingTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     mounts: HTMLElement[],
     private readonly events: PoolEvents,
   ) {
-    this.slots = mounts.map((mount) => ({ mount, player: null, isReady: false, key: null, index: -1, videoId: null, loadedVideoId: null, phase: "empty", errorCode: null, usedAt: 0, stopPriming: null }));
+    this.slots = mounts.map((mount) => ({ mount, player: null, isReady: false, key: null, index: -1, videoId: null, loadedVideoId: null, hasFrame: false, phase: "empty", errorCode: null, usedAt: 0, stopPriming: null }));
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     // Bubbling, so a tap's own handler acts first and this only catches what it left undone.
     window.addEventListener("click", this.onGesture);
@@ -113,7 +121,22 @@ export class FeedPlayerPool {
   setTargets(active: PoolTarget | null, upcoming: PoolTarget[]): void {
     this.upcoming = upcoming;
     if ((active?.key ?? null) !== (this.activeSlot?.key ?? null)) this.activate(active);
+    if (!active && upcoming.length === 0) this.releaseAll();
     this.primeNext();
+  }
+
+  /** Nothing to show, such as an empty tab. A player left in place would sit over that tab's message. */
+  private releaseAll(): void {
+    for (const slot of this.slots) {
+      if (slot.phase === "priming") {
+        slot.stopPriming?.();
+        if (slot.isReady) slot.player?.pauseVideo();
+      }
+      slot.hasFrame = false;
+      slot.key = null;
+      slot.phase = "empty";
+      slot.mount.style.display = "none";
+    }
   }
 
   setInView(isInView: boolean): void {
@@ -131,6 +154,20 @@ export class FeedPlayerPool {
 
   reposition(): void {
     for (const slot of this.slots) if (slot.key !== null) this.events.place(slot.mount, slot.index);
+  }
+
+  /**
+   * The tap on the welcome screen, which is what lets a browser allow sound. The video has been
+   * running silently behind it, so it goes back to its start and is heard from the first moment.
+   */
+  beginWithSound(): void {
+    this.wantsSound = true;
+    this.soundIsAllowed = true;
+    const slot = this.activeSlot;
+    if (!slot?.player || !slot.isReady) return;
+    slot.player.seekTo(0, true);
+    this.turnSoundOn(slot.player);
+    slot.player.playVideo();
   }
 
   /** From a person's action, using the documented mute and unMute methods. */
@@ -165,6 +202,7 @@ export class FeedPlayerPool {
     this.finishWatch();
     this.isDestroyed = true;
     this.clearWaits();
+    if (this.leavingTimer) clearTimeout(this.leavingTimer);
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     window.removeEventListener("click", this.onGesture);
     window.removeEventListener("keydown", this.onKeyGesture);
@@ -204,6 +242,7 @@ export class FeedPlayerPool {
     if (!target) return;
 
     const slot = this.slots.find((candidate) => candidate.key === target.key) ?? this.slotToReuse(target);
+    if (slot === this.leavingSlot) this.stopLeaving();
     if (slot.key !== target.key) this.assign(slot, target);
     this.activeSlot = slot;
     slot.usedAt = Date.now();
@@ -223,19 +262,51 @@ export class FeedPlayerPool {
   }
 
   private leave(slot: Slot): void {
+    const wasPlaying = this.isPlayingNow && this.tracker?.hasFirstFrame === true;
     this.finishWatch();
     this.clearWaits();
     slot.mount.dataset.playerRole = "buffer";
     slot.mount.inert = true;
-    if (slot.phase === "active") slot.phase = "primed";
     this.isExpectingPause = false;
+    this.settleLeaving();
+    if (slot.phase === "active") slot.phase = "primed";
     if (!slot.player || !slot.isReady) return;
+    if (!wasPlaying) {
+      this.rewind(slot);
+      return;
+    }
+    // Silent at once, but still moving while it slides out, which is what a thumbnail would break.
+    slot.player.mute();
+    slot.phase = "leaving";
+    this.leavingSlot = slot;
+    this.events.onLeaving(slot.key);
+    this.leavingTimer = setTimeout(() => this.settleLeaving(), LEAVING_MS);
+  }
+
+  /** Coming back within moments carries on where it was, so a small wobble of a finger changes nothing. */
+  private stopLeaving(): void {
+    if (this.leavingTimer) clearTimeout(this.leavingTimer);
+    this.leavingTimer = null;
+    this.leavingSlot = null;
+    this.events.onLeaving(null);
+  }
+
+  private settleLeaving(): void {
+    const slot = this.leavingSlot;
+    if (!slot) return;
+    this.stopLeaving();
+    if (slot.phase !== "leaving") return;
+    slot.phase = "primed";
+    this.rewind(slot);
+  }
+
+  /** Swiping back starts it from the top, as a fresh card does, with its buffer still there. */
+  private rewind(slot: Slot): void {
     try {
-      slot.player.mute();
-      slot.player.pauseVideo();
-      // Swiping back should start it from the top, as a fresh card does, with its buffer still there.
-      slot.player.seekTo(0, true);
-      slot.player.pauseVideo();
+      slot.player?.mute();
+      slot.player?.pauseVideo();
+      slot.player?.seekTo(0, true);
+      slot.player?.pauseVideo();
     } catch {
       // Being torn down.
     }
@@ -250,7 +321,7 @@ export class FeedPlayerPool {
     const empty = this.slots.find((slot) => slot.key === null);
     if (empty) return empty;
     const needed = new Set([forKey, ...this.upcoming.map((target) => target.key)]);
-    const unneeded = this.slots.filter((slot) => slot !== this.activeSlot && !needed.has(slot.key!) && slot.phase !== "priming");
+    const unneeded = this.slots.filter((slot) => slot !== this.activeSlot && !needed.has(slot.key!) && slot.phase !== "priming" && slot.phase !== "leaving");
     return unneeded.sort((a, b) => a.usedAt - b.usedAt)[0] ?? null;
   }
 
@@ -260,6 +331,7 @@ export class FeedPlayerPool {
     slot.index = target.index;
     slot.videoId = target.videoId;
     slot.errorCode = null;
+    slot.hasFrame = false;
     slot.phase = "empty";
     slot.mount.dataset.playerRole = "buffer";
     slot.mount.inert = true;
@@ -268,6 +340,7 @@ export class FeedPlayerPool {
 
   private startActive(slot: Slot): void {
     const player = slot.player!;
+    const wasLeaving = slot.phase === "leaving";
     slot.stopPriming?.();
     slot.phase = "active";
 
@@ -285,6 +358,20 @@ export class FeedPlayerPool {
       player.loadVideoById(slot.videoId!);
     }
     if (slot.errorCode !== null) this.events.onPlayback(slot.videoId, "error", slot.errorCode);
+    // Still running, so YouTube won't report a change of state to go by.
+    if (wasLeaving && this.tracker) this.revealNow(this.tracker);
+  }
+
+  /** The picture is already there, so nothing is waited for and the thumbnail goes this instant. */
+  private revealNow(tracker: WatchTracker): void {
+    this.stopFirstFrameCheck?.();
+    if (this.loadingGiveUp) clearTimeout(this.loadingGiveUp);
+    this.loadingGiveUp = null;
+    tracker.didStartPlaying = true;
+    tracker.hasFirstFrame = true;
+    this.isPlayingNow = true;
+    this.events.onPlayback(tracker.videoId, "playing", null);
+    this.onActiveStarted();
   }
 
   private canHaveSound(): boolean {
@@ -299,8 +386,8 @@ export class FeedPlayerPool {
 
   /** The browser said no. The video keeps going muted, and the next tap anywhere asks again. */
   private fallBackToMuted(player: YouTubePlayer): void {
+    // The window stays open, because the refusal's own pause can still arrive after this.
     this.soundIsAllowed = false;
-    this.soundRefusalUntil = 0;
     player.mute();
     player.playVideo();
     this.report(true, this.wantsSound);
@@ -349,6 +436,7 @@ export class FeedPlayerPool {
       } catch {
         // Time running out below settles it.
       }
+      if (hasMoved) slot.hasFrame = true;
       if (hasMoved || Date.now() - startedAt > PRIMING_GIVE_UP_MS) this.finishPriming(slot);
     }, CLOCK_CHECK_MS);
     slot.stopPriming = () => {
@@ -446,6 +534,8 @@ export class FeedPlayerPool {
       this.isPlayingNow = true;
       this.isExpectingPause = false;
       if (tracker.hasFirstFrame) this.events.onPlayback(tracker.videoId, "playing", null);
+      // Buffered ahead, so its picture has already been seen. Waiting for the clock only costs time.
+      else if (slot.hasFrame) this.revealNow(tracker);
       else this.waitForFirstFrame(player, tracker);
       return;
     }
@@ -488,6 +578,7 @@ export class FeedPlayerPool {
       tracker.hasFirstFrame = true;
       if (this.tracker !== tracker) return;
       if (hasMoved && !this.isMutedNow) this.soundIsAllowed = true;
+      if (hasMoved && this.activeSlot) this.activeSlot.hasFrame = true;
       this.events.onPlayback(tracker.videoId, "playing", null);
       this.onActiveStarted();
     };
@@ -558,6 +649,7 @@ export class FeedPlayerPool {
       this.primeNext();
       return;
     }
+    this.settleLeaving();
     for (const slot of this.slots) {
       if (slot.phase === "priming") {
         slot.stopPriming?.();

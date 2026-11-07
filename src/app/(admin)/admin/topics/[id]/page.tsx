@@ -9,14 +9,13 @@ import { AppError } from "@/lib/errors";
 import { hasPermission } from "@/lib/permissions";
 import { TopicForm } from "@/components/admin/content/entity-forms";
 import { LinksManager } from "@/components/admin/content/links-manager";
-import { listActiveCategories } from "@/features/categories/categories.service";
 import { canManageLink, linkTargetType, type LinkKind } from "@/features/relationships/links.service";
 import { getTopicForEditing } from "@/features/topics/topics.service";
 import { deleteTopicAction, setTopicArchivedAction, setTopicPublishedAction, updateTopicAction } from "../actions";
 
 export const metadata = { title: strings.admin.topics };
 
-const LINK_KINDS: LinkKind[] = ["topic.article", "topic.video", "topic.playlist", "topic.library", "topic.resource", "topic.related", "topic.complementary"];
+const LINK_KINDS: LinkKind[] = ["topic.channel", "topic.article", "topic.playlist", "topic.library", "topic.resource", "topic.related", "topic.complementary"];
 
 export default async function EditTopicPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -30,7 +29,6 @@ export default async function EditTopicPage({ params }: { params: Promise<{ id: 
   });
   if (!topic) return <StateMessage icon={FileX} title={strings.errors.notFound} />;
 
-  const categories = await listActiveCategories();
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-5 px-4 py-8" data-testid="topic-edit-page">
@@ -53,7 +51,6 @@ export default async function EditTopicPage({ params }: { params: Promise<{ id: 
         id={id}
         isPublished={topic.status === "PUBLISHED"}
         canEdit={hasPermission(actor, "topics.manage")}
-        categories={categories.map((category) => ({ id: category.id, title: category.title }))}
         onSave={updateTopicAction.bind(null, id)}
         initial={{
           title: topic.title,
@@ -61,7 +58,6 @@ export default async function EditTopicPage({ params }: { params: Promise<{ id: 
           introduction: topic.introduction,
           description: topic.description,
           coverImage: topic.coverImage,
-          categoryId: topic.categoryId,
           isFeatured: topic.isFeatured,
           displayOrder: topic.displayOrder,
           parent: topic.parent ? { id: topic.parent.id, type: "TOPIC", label: topic.parent.title } : null,

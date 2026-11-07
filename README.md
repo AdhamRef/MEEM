@@ -19,7 +19,7 @@ npm ci
 cp .env.example .env
 npm run db:dev        # in a separate terminal; leave it running
 npm run db:sync       # applies the schema and indexes
-npm run db:seed-taxonomy   # adds the starting categories
+npm run db:seed-taxonomy   # adds the starting topics
 npm run dev
 ```
 
@@ -60,7 +60,7 @@ The site runs without an API key, showing whatever is stored. With one, set `YOU
 Normally, videos come through the channel importer at `/admin/youtube-importer`. See [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) and [docs/YOUTUBE_INTEGRATION.md](docs/YOUTUBE_INTEGRATION.md). To fill a local feed quickly with specific videos (development only, since this skips the review that publishing normally requires):
 
 ```bash
-npm run youtube:import-dev -- الفقه VIDEO_ID_OR_URL ANOTHER_ID
+npm run youtube:import-dev -- VIDEO_ID_OR_URL ANOTHER_ID
 ```
 
 **In production, schedule a daily call to the refresh endpoint.** YouTube requires stored data to be refreshed or removed within 30 days, and videos past that limit leave the site until refreshed. Set `CRON_SECRET`, then:
@@ -101,7 +101,7 @@ The first super admin is created from the command line, so it can't be reached f
 | `npm run test:e2e` | Browser tests on mobile and desktop profiles, on their own temporary database, with a stub of YouTube's player. Run `npx playwright install chromium` once first. |
 | `npm run db:validate` | Validates the Prisma schema |
 | `npm run db:sync` | Applies the schema and indexes |
-| `npm run db:seed-taxonomy` | Adds any missing starting categories. It never overwrites existing ones. |
+| `npm run db:seed-taxonomy` | Adds any missing starting topics. It never overwrites existing ones. |
 | `npm run check:bundle` | After a build, checks that no secret names or values reached browser code |
 | `npm run verify` | Validation, typecheck, lint, unit and integration tests, and build |
 

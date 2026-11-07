@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { AppError } from "@/lib/errors";
 import { assertPermission, type Actor } from "@/lib/permissions";
 import { withTransaction } from "@/lib/prisma/transaction";
@@ -20,7 +20,6 @@ const ctaSchema = z.discriminatedUnion("type", [
 
 const assignmentSchema = z.strictObject({
   kind: z.enum(["SHORT", "LONG_FORM"]).optional(),
-  categoryId: objectIdSchema.nullable().optional(),
   cta: ctaSchema.nullable().optional(),
 });
 
@@ -42,11 +41,6 @@ export async function assignVideo(actor: Actor | null, rawId: unknown, rawInput:
     const existing = await tx.video.findUnique({ where: { id }, select: { id: true } });
     if (!existing) throw new AppError("NOT_FOUND");
 
-    if (input.categoryId) {
-      const category = await tx.category.findUnique({ where: { id: input.categoryId }, select: { id: true } });
-      if (!category) throw new AppError("VALIDATION");
-    }
-
     const video = await tx.video.update({
       where: { id },
       data: { ...input, ...(input.kind ? { reviewedAt: new Date() } : {}) },
@@ -63,12 +57,11 @@ export async function setVideoPublished(actor: Actor | null, rawId: unknown, isP
   return withTransaction(async (tx) => {
     const existing = await tx.video.findUnique({
       where: { id },
-      select: { kind: true, categoryId: true, reviewedAt: true, availability: true, isArchived: true, publishedAt: true },
+      select: { kind: true, reviewedAt: true, availability: true, isArchived: true, publishedAt: true },
     });
     if (!existing) throw new AppError("NOT_FOUND");
 
-    // Only what would truly fail is refused. A category is optional and can come later, and a
-    // person pressing publish is the review that detection can't replace (§7.2).
+    // Only what would truly fail is refused. A person pressing publish is the review that detection can't replace (§7.2).
     if (isPublished && (existing.availability !== "AVAILABLE" || existing.isArchived)) throw new AppError("CONFLICT");
 
     const video = await tx.video.update({

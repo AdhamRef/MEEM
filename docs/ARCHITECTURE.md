@@ -12,7 +12,7 @@ src/
     (public)/          Public pages inside the app shell: the feed, /shorts/[id], /videos/[id], /articles, /topics, /libraries, /playlists, /resources, /explore, /search, /saved, /history, /account, /privacy, /terms, /interests, /auth/signin, dev-only /design-system
     (public)/@modal/   Shows a Short over the page that linked to it
     (admin)/admin/     Guarded dashboard, with the 14 sections in §19.2
-    api/               auth, categories, preferences, feed, signals, favorites, history, account, search suggestions, Explore's topics, comments, uploads, progress, cron, admin
+    api/               auth, topics, preferences, feed, signals, favorites, history, account, search suggestions, Explore's topics, comments, uploads, progress, cron, admin
     media/             Serves uploads for the local storage provider
     spike/feed/        Temporary device test
     not-found.tsx, global-error.tsx, globals.css, layout.tsx
@@ -36,7 +36,7 @@ src/
     admin/playlists/   Playlist forms and the drag-and-drop item manager
     admin/importer/    The importer's job screen, and channel controls
     admin/videos/      The bulk list, shared with articles, and the video editor
-    admin/system/      Categories, users, and settings
+    admin/system/      Users and settings
     feed/              The Shorts feed and its cards
     video/             Video page and modal, comments, save and share
   hooks/               useActivePlayer and usePlaylistPlayer, which each manage a page's one YouTube player
@@ -60,7 +60,7 @@ src/
     playlists/         Playlists, their items, viewing progress
     relationships/     Links between content, searchable selection, cleaning up references
     resources/         External resources
-    categories/        Categories, their validation, and the starting taxonomy
+    topics/            Topics, their validation, the starting list, and the first-visit catalogue
     topics/            Topics
     preferences/       Interests, onboarding state, merging guest choices
     recommendations/   Pure scoring functions, their settings, watch signals
@@ -137,7 +137,6 @@ Sign-in is optional and uses Google through `next-auth` 4, with sessions stored 
 | Delete content | | | | Yes | Yes |
 | Topics, relationships, libraries, playlists | Grant | Grant | Yes | Yes | Yes |
 | YouTube import | Grant | Grant | Grant | Yes | Yes |
-| Categories | | | | Yes | Yes |
 | View users, view audit log | | | | Yes | Yes |
 | Manage users, change settings | | | | | Yes |
 
@@ -178,18 +177,19 @@ score = explicit weight × selected interest weight + behaviour score decayed ov
 
 `GET /api/feed` returns a page from `features/shorts/feed.service.ts`:
 
-1. **Scores:** every active category is ranked with the functions above.
-2. **Slots:** `allocateCategorySlots` shares the page by score, and gives the configured exploration share to categories with no positive score. With no history, the mix is even.
-3. **This visit:** the browser sends what happened since the page opened, as `momentum` for categories and `channelMomentum` for channels. Completions, replays, and saves raise them and early skips lower them. It only changes this person's next pages, and is never stored. A category's score moves by `sessionMomentumWeight`, and `maxCategoryShare` stops one category taking over a page.
-4. **Choosing channels:** `planFeedPage` decides each card's category and channel. A channel never returns within `channelSpacing` cards while another is available, even if that means borrowing from another category, and this carries across pages through the cursor. Bigger channels are likelier by the square root of their size, so one with most of the library can't dominate. If nothing else is left, the channel seen longest ago comes next.
-5. **Reading:** each category and channel pair is read in `(feedKey, id)` order from a random start point chosen per session, wrapping around at the end. The cursor counts what's been read from each pair, which guarantees no repeats within a round and stays small. A cursor that outgrows a URL starts a new round.
+0. **Which channels:** a channel is read only if it shares a chosen topic or was switched on by hand, and never if switched off (`isChannelOn`). With nothing chosen, everything is on. A channel with no published topic counts under `UNASSIGNED_TOPIC_ID`.
+1. **Scores:** every published topic with something left to show is ranked with the functions above.
+2. **Slots:** `allocateTopicSlots` shares the page by score, and gives the configured exploration share to topics with no positive score. Exploration stays within the channels that are on, so a switched-off channel never comes back this way. With no history, the mix is even.
+3. **This visit:** the browser sends what happened since the page opened, as `momentum` for topics and `channelMomentum` for channels. Completions, replays, and saves raise them and early skips lower them. It only changes this person's next pages, and is never stored. A topic's score moves by `sessionMomentumWeight`, and `maxCategoryShare` stops one category taking over a page.
+4. **Choosing channels:** `planFeedPage` decides each card's topic and channel. A channel never returns within `channelSpacing` cards while another is available, even if that means borrowing from another topic, and this carries across pages through the cursor. Bigger channels are likelier by the square root of their size, so one with most of the library can't dominate. If nothing else is left, the channel seen longest ago comes next.
+5. **Reading:** each channel is read in `(feedKey, id)` order from a random start point chosen per session, wrapping around at the end. The cursor counts what's been read from each channel, however many topics it has, which guarantees no repeats within a round and stays small. A cursor that outgrows a URL starts a new round.
 6. **Rounds:** the feed has no end. Once everything has been shown, the browser starts again in a new order, and nothing repeats before that.
 
-Signed-in people's interests come from their account. Guests' come from browser storage as request hints, which are validated and bounded. A guest's watching stays in the browser until they sign in.
+Signed-in people's choices come from their account. Guests' come from browser storage as request hints, which are validated and bounded. A guest's watching stays in the browser until they sign in.
 
 ### Explore
 
-`/explore` is laid out like a video site's home page: search and category chips stay at the top, and `ExploreFeed` loads videos as people scroll, with a row of Shorts and an editorial shelf between each stretch. Once long videos run out, Shorts carry on as a grid, so everything published can be reached. `listExploreVideos` asks `getFeedPage` as nobody in particular, so channels stay spread out and the page is the same for everyone (§16). It starts no playback by itself.
+`/explore` is laid out like a video site's home page: search and topic chips stay at the top, and `ExploreFeed` loads videos as people scroll, with a row of Shorts and an editorial shelf between each stretch. Once long videos run out, Shorts carry on as a grid, so everything published can be reached. `listExploreVideos` asks `getFeedPage` as nobody in particular, so channels stay spread out and the page is the same for everyone (§16). It starts no playback by itself.
 
 ### The player
 
@@ -316,7 +316,7 @@ These are exact on purpose. **Do not run an unpinned install or `npm update` on 
 
 **A Short opened from a page with a player:** the modal route would add a second player, so nothing on `/videos/[id]` or the feed links to `/shorts/[id]`. Keep it that way.
 
-**The phone top bar** takes 52px from the player's space, and the category tabs another 52px. If the real-phone test finds the player too small, these are the first places to look.
+**The phone top bar** takes 52px from the player's space, and the topic tabs another 52px. If the real-phone test finds the player too small, these are the first places to look.
 
 **Saved videos** can be saved now, but `/saved` arrives in Phase 8, so there's nowhere to see them yet.
 
@@ -332,7 +332,7 @@ YouTube player methods don't exist until `onReady`, and people can swipe before 
 | Article | Words starting with ال are stored and searched in both forms, except الله and اللهم. |
 | Particles | Words such as في and من are dropped from a query with other words, since the index has no stop words. |
 | Direct matches | `$text`, sorted by score, with titles weighted 5 to 1. |
-| Topics and categories | If the query names a topic or category, by title and not by a mention in its description, the content connected to it counts too, after the direct matches. So names don't have to be copied onto every item, and renaming one needs no reindexing. |
+| Topics | If the query names a topic, by title and not by a mention in its description, the content connected to it counts too, after the direct matches. So names don't have to be copied onto every item, and renaming one needs no reindexing. |
 
 Pagination is by page number rather than cursor, because relevance order has no stable key to continue from. Results are capped at 25 pages for each type.
 

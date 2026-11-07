@@ -50,7 +50,7 @@ export async function listChannels(actor: Actor | null, options: { query?: strin
     orderBy: { id: "desc" },
     take: 26,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    select: { id: true, youtubeChannelId: true, title: true, handle: true, thumbnailUrl: true, isActive: true, lastSyncedAt: true, metadataFetchedAt: true, _count: { select: { videos: true } } },
+    select: { id: true, youtubeChannelId: true, title: true, handle: true, thumbnailUrl: true, isActive: true, lastSyncedAt: true, metadataFetchedAt: true, _count: { select: { videos: true } }, topics: { select: { topic: { select: { title: true } } } } },
   });
   return toCursorPage(rows, 25);
 }

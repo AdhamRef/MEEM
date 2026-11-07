@@ -51,6 +51,24 @@ const seedVideo = (title: string, overrides: Record<string, unknown> = {}) => {
   });
 };
 
+/** Removed after each test: a channel with public videos joins the first-visit choices, which other specs count exactly. */
+let createdChannelIds: string[] = [];
+
+test.afterEach(async () => {
+  if (createdChannelIds.length === 0) return;
+  await prisma.video.deleteMany({ where: { channelId: { in: createdChannelIds } } });
+  await prisma.channelTopic.deleteMany({ where: { channelId: { in: createdChannelIds } } });
+  await prisma.youTubeChannel.deleteMany({ where: { id: { in: createdChannelIds } } });
+  createdChannelIds = [];
+});
+
+async function seedChannel(topicId: string) {
+  const id = unique();
+  const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: `UC${id}${id}${id}`, title: `قناة ${id}`, metadataFetchedAt: new Date(), topics: { create: { topicId } } } });
+  createdChannelIds.push(channel.id);
+  return channel;
+}
+
 async function signIn(page: Page, role: Parameters<typeof createAccount>[0], baseURL: string) {
   const account = await createAccount(role);
   await signInBrowser(page.context(), baseURL, account.sessionToken);
@@ -85,8 +103,9 @@ test.describe("navigation", () => {
 test.describe("explore", () => {
   test("a guest sees editorial sections, labelled and with real links", async ({ page }) => {
     const id = unique();
-    const category = await prisma.category.create({ data: { title: `مجال ${id}`, slug: `category-${id}` } });
-    const topic = await seedTopic(`موضوع مميز ${id}`, { isFeatured: true, categoryId: category.id });
+    const topic = await seedTopic(`موضوع مميز ${id}`, { isFeatured: true });
+    // Only a topic with a channel becomes a chip.
+    await seedChannel(topic.id);
     const article = await seedArticle(`مقال مختار ${id}`, { isFeatured: true });
     const library = await seedLibrary(`مكتبة ${id}`, { isFeatured: true });
     const playlist = await seedPlaylist(`قائمة مميزة ${id}`, { isFeatured: true });
@@ -96,7 +115,7 @@ test.describe("explore", () => {
     await open(page, "/explore");
     await expect(page.getByTestId("explore-page")).toBeVisible();
 
-    await expect(page.getByTestId("section-categories").getByRole("link", { name: category.title })).toHaveAttribute("href", /\/explore\?category=/);
+    await expect(page.getByTestId("section-topics").getByRole("link", { name: topic.title })).toHaveAttribute("href", /\/explore\?topic=/);
     await expect(page.getByTestId("section-featured-topics").getByText(topic.title)).toBeVisible();
     await expect(page.getByTestId("section-selected-articles").getByText(article.title)).toBeVisible();
     await expect(page.getByTestId("section-libraries").getByText(library.name)).toBeVisible();
@@ -115,23 +134,33 @@ test.describe("explore", () => {
     await expect(page.getByTestId("section-popular")).toHaveCount(0);
   });
 
-  test("recommends topics only from interests a guest chose, and offers changing them", async ({ page }) => {
+  test("recommends only the topics a guest chose and their sub-topics, and offers changing them", async ({ page }) => {
     const id = unique();
-    const chosen = await prisma.category.create({ data: { title: `مختار ${id}`, slug: `chosen-${id}` } });
-    await seedTopic(`موضوع من اهتمامك ${id}`, { categoryId: chosen.id });
+    const chosen = await seedTopic(`مختار ${id}`);
+    const child = await seedTopic(`موضوع من اهتمامك ${id}`, { parentId: chosen.id });
+    const other = await seedTopic(`موضوع غير مختار ${id}`);
+    // A topic is offered for choosing only with a channel that has something to watch.
+    const channel = await seedChannel(chosen.id);
+    await seedVideo(`مقطع ${id}`, { channelId: channel.id });
 
     await open(page, "/explore");
     await expect(page.getByTestId("explore-page")).toBeVisible();
     await expect(page.getByTestId("section-recommended-topics")).toHaveCount(0);
 
     await open(page, "/interests");
-    await page.getByRole("button", { name: new RegExp(chosen.title) }).click();
-    await page.getByRole("button", { name: "حفظ التغييرات" }).click();
-    await expect(page.getByText("تم حفظ اهتماماتك.")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("موضوعاتي وقنواتي");
+    await page.getByTestId("topic-tile").filter({ hasText: chosen.title }).click();
+    await page.getByTestId("interests-save").click();
+    await expect(page.getByText("تم حفظ اختياراتك.")).toBeVisible();
+    expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("preferences.v2")!).selectedTopicIds)).toEqual([chosen.id]);
+
     await open(page, "/explore");
     const section = page.getByTestId("section-recommended-topics");
-    await expect(section.getByText(`موضوع من اهتمامك ${id}`)).toBeVisible();
-    await expect(section.getByRole("link", { name: /تعديل اهتماماتي/ })).toHaveAttribute("href", "/interests");
+    await expect(section.getByRole("heading", { name: "من موضوعاتك" })).toBeVisible();
+    await expect(section.getByText(chosen.title)).toBeVisible();
+    await expect(section.getByText(child.title)).toBeVisible();
+    await expect(section.getByText(other.title)).toHaveCount(0);
+    await expect(section.getByRole("link", { name: /تعديل موضوعاتي/ })).toHaveAttribute("href", "/interests");
   });
 });
 
@@ -182,23 +211,37 @@ test.describe("search", () => {
     await expectAccessible(page);
   });
 
-  test("filters by category, and explains which types that leaves out", async ({ page }) => {
+  test("filters by topic across every linked type, and leaves out only topics themselves", async ({ page }) => {
     const id = unique();
-    const category = await prisma.category.create({ data: { title: `مجال ${id}`, slug: `filter-${id}` } });
-    await seedArticle(`بحث${id} داخل`, { categoryId: category.id });
+    const topic = await seedTopic(`موضوع التصفية ${id}`);
+    const article = await seedArticle(`بحث${id} داخل`);
+    await prisma.articleTopic.create({ data: { articleId: article.id, topicId: topic.id } });
     await seedArticle(`بحث${id} خارج`);
-    await seedLibrary(`بحث${id} مكتبة`);
+    const library = await seedLibrary(`بحث${id} مكتبة داخل`);
+    await prisma.libraryTopic.create({ data: { libraryId: library.id, topicId: topic.id } });
+    await seedLibrary(`بحث${id} مكتبة خارج`);
+    // A video belongs to the topics of its channel.
+    const channel = await seedChannel(topic.id);
+    await seedVideo(`بحث${id} مقطع داخل`, { channelId: channel.id });
+    await seedVideo(`بحث${id} مقطع خارج`);
+    await seedTopic(`بحث${id} موضوع`);
 
     await open(page, `/search?q=${encodeURIComponent(`بحث${id}`)}`);
-    await page.getByTestId("search-category").selectOption(category.slug);
+    await expect(page.getByTestId("search-group-TOPIC")).toBeVisible();
+    await page.getByTestId("search-topic").selectOption(topic.slug);
     await page.getByTestId("search-submit").click();
 
-    await expect(page).toHaveURL(/category=/);
+    await expect(page).toHaveURL(/topic=/);
     await settled(page);
-    await expect(page.getByText(`بحث${id} داخل`)).toBeVisible();
+    await expect(page.getByTestId("search-group-ARTICLE").getByText(`بحث${id} داخل`)).toBeVisible();
     await expect(page.getByText(`بحث${id} خارج`)).toHaveCount(0);
-    await expect(page.getByTestId("search-group-LIBRARY")).toHaveCount(0);
-    await expect(page.getByTestId("search-type-LIBRARY")).toHaveCount(0);
+    await expect(page.getByTestId("search-group-LIBRARY").getByText(`بحث${id} مكتبة داخل`)).toBeVisible();
+    await expect(page.getByText(`بحث${id} مكتبة خارج`)).toHaveCount(0);
+    await expect(page.getByTestId("search-group-SHORT").getByText(`بحث${id} مقطع داخل`)).toBeVisible();
+    await expect(page.getByText(`بحث${id} مقطع خارج`)).toHaveCount(0);
+    await expect(page.getByTestId("search-type-LIBRARY")).toBeVisible();
+    await expect(page.getByTestId("search-group-TOPIC")).toHaveCount(0);
+    await expect(page.getByTestId("search-type-TOPIC")).toHaveCount(0);
   });
 
   test("pages through more results than fit", async ({ page }) => {
@@ -343,8 +386,6 @@ test.describe("saved content", () => {
       for (const chip of await locator.getByRole("link").all()) expect((await chip.boundingBox())?.height).toBeLessThan(60);
     };
     await singleLine(page.getByTestId("search-types"));
-    await open(page, "/topics");
-    await singleLine(page.getByTestId("topic-categories"));
     await signIn(page, "USER", baseURL!);
     await open(page, "/saved");
     await singleLine(page.getByTestId("saved-filters"));

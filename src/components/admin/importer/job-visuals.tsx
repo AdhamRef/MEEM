@@ -15,7 +15,7 @@ export const youtubeChannelUrl = (channelId: string) => `https://www.youtube.com
 
 export function ChannelAvatar({ url, className }: { url: string | null; className?: string }) {
   return url ? (
-    <img src={url} alt="" loading="lazy" decoding="async" referrerPolicy="strict-origin-when-cross-origin" className={cn("shrink-0 rounded-full bg-surface-elevated object-cover", className)} />
+    <img src={url} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className={cn("shrink-0 rounded-full bg-surface-elevated object-cover", className)} />
   ) : (
     <span aria-hidden className={cn("flex shrink-0 items-center justify-center rounded-full bg-surface-elevated text-text-secondary", className)}>
       <Tv className="size-1/2" strokeWidth={1.5} />

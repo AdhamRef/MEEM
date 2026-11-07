@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { objectIdSchema, slugSchema } from "@/features/categories/schemas";
+import { objectIdSchema, slugSchema } from "@/features/topics/schemas";
 import { isSafeHref, isSafeImageSrc } from "@/lib/content/document";
 import { AppError, isUniqueConstraintError } from "@/lib/errors";
 import { slugify } from "@/lib/slug";

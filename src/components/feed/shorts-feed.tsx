@@ -1,9 +1,9 @@
 "use client";
 
-import { Clapperboard, RotateCw, TriangleAlert } from "lucide-react";
+import { Clapperboard, RotateCw, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { OnboardingPrompt } from "@/components/preferences/onboarding-prompt";
 import { usePreferences } from "@/components/preferences/preferences-provider";
 import { StateMessage } from "@/components/shared/state-message";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,7 @@ import { FeedLoader } from "./feed-loader";
 const Card = FEED_IMMERSIVE_OVERLAY ? ImmersiveFeedCard : FeedCard;
 import { useFeedPages } from "./use-feed-pages";
 
-interface CategoryTab {
+interface TopicTab {
   id: string;
   title: string;
 }
@@ -36,7 +36,6 @@ interface CategoryTab {
 interface ShortsFeedProps {
   /** A shared video to show first. */
   initialVideo?: VideoCard;
-  showOnboarding?: boolean;
 }
 
 interface FeedPlayerOptions {
@@ -84,19 +83,34 @@ const SOUND_SWIPE_DISTANCE = 40;
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedProps) {
-  const { status: preferencesStatus, isGuest, selectedCategoryIds } = usePreferences();
+/** Choices stay one tap away from the feed they shape. */
+function CustomizeLink() {
+  return (
+    <Link
+      href="/interests"
+      aria-label={strings.feed.editChoices}
+      title={strings.feed.editChoices}
+      data-testid="feed-customize"
+      className="flex size-11 shrink-0 items-center justify-center self-center rounded-full text-white/85 outline-none transition-colors hover:text-white focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      <SlidersHorizontal aria-hidden className="size-5" strokeWidth={1.75} />
+    </Link>
+  );
+}
+
+export function ShortsFeed({ initialVideo }: ShortsFeedProps) {
+  const { status: preferencesStatus, isGuest, selectedTopicIds, channelChoices } = usePreferences();
   const { status: sessionStatus } = useSession();
 
-  const [categories, setCategories] = useState<CategoryTab[]>([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [topics, setTopics] = useState<TopicTab[]>([]);
+  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
 
   useEffect(() => {
     let isCurrent = true;
-    fetch("/api/categories")
-      .then((response) => (response.ok ? (response.json() as Promise<{ categories: CategoryTab[] }>) : { categories: [] }))
+    fetch("/api/topics")
+      .then((response) => (response.ok ? (response.json() as Promise<{ topics: TopicTab[] }>) : { topics: [] }))
       .then((data) => {
-        if (isCurrent) setCategories(data.categories);
+        if (isCurrent) setTopics(data.topics);
       })
       .catch(() => {
         // The tabs stay hidden. "For you" still works without them.
@@ -110,20 +124,25 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
   const query = useMemo(() => {
     if (preferencesStatus === "loading") return null;
     const params = new URLSearchParams();
-    if (selectedCategoryId) params.set("categoryId", selectedCategoryId);
+    if (selectedTopicId) params.set("topicId", selectedTopicId);
     if (isGuest) {
-      if (selectedCategoryIds.length) params.set("interests", selectedCategoryIds.join(","));
+      if (selectedTopicIds.length) params.set("interests", selectedTopicIds.join(","));
+      const switched = Object.entries(channelChoices);
+      const switchedOn = switched.filter(([, isOn]) => isOn).map(([id]) => id);
+      const switchedOff = switched.filter(([, isOn]) => !isOn).map(([id]) => id);
+      if (switchedOn.length) params.set("channelsOn", switchedOn.join(","));
+      if (switchedOff.length) params.set("channelsOff", switchedOff.join(","));
       const behaviour = Object.entries(readGuestBehaviour(window.localStorage, new Date()));
       if (behaviour.length) params.set("behaviour", behaviour.map(([id, score]) => `${id}:${score}`).join(","));
     }
     return params.toString();
-  }, [preferencesStatus, isGuest, selectedCategoryIds, selectedCategoryId]);
+  }, [preferencesStatus, isGuest, selectedTopicIds, channelChoices, selectedTopicId]);
 
   // What happened this session, sent with each page so the feed answers within a few swipes.
   const momentumRef = useRef(emptySessionMomentum());
   const getSessionParams = useCallback(() => sessionMomentumParams(momentumRef.current), []);
 
-  const { items, status, hasMore, loadMore, retry } = useFeedPages(query, selectedCategoryId ? undefined : initialVideo, getSessionParams);
+  const { items, status, hasMore, loadMore, retry } = useFeedPages(query, selectedTopicId ? undefined : initialVideo, getSessionParams);
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [isActiveInView, setIsActiveInView] = useState(false);
@@ -167,7 +186,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     momentumRef.current = addSessionMomentum(momentumRef.current, video, timesEnded >= 2 ? "replay" : signal);
 
     if (isGuestRef.current) {
-      if (video.category) recordGuestSignal(window.localStorage, video.category.id, signal, new Date());
+      for (const topic of video.topics) recordGuestSignal(window.localStorage, topic.id, signal, new Date());
       return;
     }
     // A lost signal only makes the feed slightly less personal, so failures are ignored.
@@ -357,8 +376,8 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [move, toggleSound]);
 
-  const selectTab = (categoryId: string | null) => {
-    setSelectedCategoryId(categoryId);
+  const selectTab = (topicId: string | null) => {
+    setSelectedTopicId(topicId);
     setActiveIndex(null);
     setIsActiveInView(false);
     scrollerRef.current?.scrollTo({ top: 0 });
@@ -423,6 +442,7 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
     };
   }, [isSoundLocked, unlockSound]);
 
+  const hasPersonalChoices = selectedTopicIds.length > 0 || Object.keys(channelChoices).length > 0;
   const isFirstLoad = status === "loading" && items.length === 0;
   const isEmpty = status === "ready" && items.length === 0;
   const hasFailedOnFirstPage = status === "error" && items.length === 0;
@@ -430,20 +450,21 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
   return (
     // The attribute hides the phone top bar, in globals.css, so the video gets that height too.
     <div className="relative flex flex-col" data-immersive-feed>
-      {categories.length > 0 ? (
+      {topics.length > 0 ? (
         <div role="group" aria-label={strings.feed.tabsLabel} className={cn("flex h-(--feed-tabs-height) items-stretch gap-1 overflow-x-auto px-2 text-white md:justify-center-safe", FEED_IMMERSIVE_OVERLAY ? "absolute inset-x-0 top-0 z-40 bg-linear-to-b from-black/70 to-transparent" : "bg-black")} data-testid="feed-tabs">
           <div className="flex shrink-0 items-center md:hidden">
             <AccountMenu />
           </div>
-          {[{ id: null as string | null, title: strings.feed.forYou }, ...categories].map((tab) => (
+          <CustomizeLink />
+          {[{ id: null as string | null, title: strings.feed.forYou }, ...topics].map((tab) => (
             <button
               key={tab.id ?? "for-you"}
               type="button"
-              aria-pressed={selectedCategoryId === tab.id}
+              aria-pressed={selectedTopicId === tab.id}
               onClick={() => selectTab(tab.id)}
               className={cn(
                 "shrink-0 border-b-2 px-3 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset",
-                selectedCategoryId === tab.id ? "border-white font-semibold text-white" : "border-transparent text-white/70 hover:text-white",
+                selectedTopicId === tab.id ? "border-white font-semibold text-white" : "border-transparent text-white/70 hover:text-white",
               )}
             >
               {tab.title}
@@ -451,8 +472,9 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
           ))}
         </div>
       ) : (
-        <div className={cn("flex h-(--feed-tabs-height) items-center px-2 md:hidden", FEED_IMMERSIVE_OVERLAY ? "absolute inset-x-0 top-0 z-40" : "bg-black")}>
+        <div className={cn("flex h-(--feed-tabs-height) items-center justify-between px-2 text-white md:hidden", FEED_IMMERSIVE_OVERLAY ? "absolute inset-x-0 top-0 z-40" : "bg-black")}>
           <AccountMenu />
+          <CustomizeLink />
         </div>
       )}
 
@@ -474,7 +496,6 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
           />
         ))}
 
-        {showOnboarding && !selectedCategoryId ? <OnboardingPrompt /> : null}
 
         {isFirstLoad ? <FeedLoader /> : null}
 
@@ -500,7 +521,16 @@ export function ShortsFeed({ initialVideo, showOnboarding = false }: ShortsFeedP
             <StateMessage
               icon={Clapperboard}
               title={strings.feed.emptyTitle}
-              description={selectedCategoryId ? strings.feed.emptyCategoryDescription : strings.feed.emptyDescription}
+              description={hasPersonalChoices ? strings.feed.emptyChoicesDescription : selectedTopicId ? strings.feed.emptyTopicDescription : strings.feed.emptyDescription}
+              action={
+                hasPersonalChoices ? (
+                  <Button asChild variant="secondary">
+                    <Link href="/interests" data-testid="feed-empty-edit">
+                      {strings.feed.editChoices}
+                    </Link>
+                  </Button>
+                ) : undefined
+              }
             />
           </div>
         ) : null}

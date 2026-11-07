@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { strings } from "@/config/strings.ar";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { articleCardSelect, libraryCardSelect, resourceCardSelect, topicCardSelect } from "@/features/content/cards";
 import {
   conflictOnDuplicate,

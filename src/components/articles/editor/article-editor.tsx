@@ -40,7 +40,6 @@ const formSchema = z.object({
   coverImage: z.string().nullable(),
   coverCaption: z.string().trim().max(300, c.tooLong),
   bylineName: z.string().trim().max(120, c.tooLong),
-  categoryId: z.string(),
   seoTitle: z.string().trim().max(120, c.tooLong),
   seoDescription: z.string().trim().max(300, c.tooLong),
   sources: z.array(z.object({ title: z.string().trim().min(1, c.required).max(300, c.tooLong), author: z.string().trim().max(200, c.tooLong), url: httpUrl, note: z.string().trim().max(500, c.tooLong) })),
@@ -63,7 +62,6 @@ export interface ArticleEditorProps {
   id?: string;
   status: "DRAFT" | "PUBLISHED";
   canAssign: boolean;
-  categories: { id: string; title: string }[];
   initial: {
     title: string;
     slug: string;
@@ -71,7 +69,6 @@ export interface ArticleEditorProps {
     coverImage: string | null;
     coverCaption: string | null;
     bylineName: string | null;
-    categoryId: string | null;
     seoTitle: string | null;
     seoDescription: string | null;
     sources: { title: string; author: string | null; url: string | null; note: string | null }[];
@@ -87,7 +84,7 @@ export interface ArticleEditorProps {
   onDirtyChange?: (isDirty: boolean) => void;
 }
 
-export function ArticleEditor({ id, status, canAssign, categories, initial, onSave, onDirtyChange }: ArticleEditorProps) {
+export function ArticleEditor({ id, status, canAssign, initial, onSave, onDirtyChange }: ArticleEditorProps) {
   const router = useRouter();
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -98,7 +95,6 @@ export function ArticleEditor({ id, status, canAssign, categories, initial, onSa
       coverImage: initial.coverImage,
       coverCaption: initial.coverCaption ?? "",
       bylineName: initial.bylineName ?? "",
-      categoryId: initial.categoryId ?? "",
       seoTitle: initial.seoTitle ?? "",
       seoDescription: initial.seoDescription ?? "",
       sources: initial.sources.map((source) => ({ title: source.title, author: source.author ?? "", url: source.url ?? "", note: source.note ?? "" })),
@@ -147,7 +143,6 @@ export function ArticleEditor({ id, status, canAssign, categories, initial, onSa
       coverImage: values.coverImage,
       coverCaption: values.coverCaption || null,
       bylineName: values.bylineName || null,
-      categoryId: values.categoryId || null,
       seoTitle: values.seoTitle || null,
       seoDescription: values.seoDescription || null,
       // ProseMirror builds attributes without a prototype, which Server Actions silently replace
@@ -230,16 +225,6 @@ export function ArticleEditor({ id, status, canAssign, categories, initial, onSa
         </FormField>
         <FormField label={e.byline} error={errors.bylineName?.message}>
           <Input {...form.register("bylineName")} dir="auto" data-testid="article-byline" />
-        </FormField>
-        <FormField label={c.category}>
-          <select {...form.register("categoryId")} className={selectClass} data-testid="article-category">
-            <option value="">{c.noCategory}</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.title}
-              </option>
-            ))}
-          </select>
         </FormField>
         <FormField label={c.slug} hint={status === "PUBLISHED" ? c.slugLockedHint : c.slugHint} error={errors.slug?.message}>
           <Input {...form.register("slug")} dir="auto" disabled={status === "PUBLISHED"} data-testid="article-slug" />

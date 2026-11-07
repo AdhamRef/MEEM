@@ -56,7 +56,7 @@ export function VideoWatch({ video, related }: { video: VideoCard; related?: Rea
       const signal = signalFromWatch({ ...watch, durationSeconds: video.durationSeconds });
       if (!signal) return;
       if (isGuestRef.current) {
-        if (video.category) recordGuestSignal(window.localStorage, video.category.id, signal, new Date());
+        for (const topic of video.topics) recordGuestSignal(window.localStorage, topic.id, signal, new Date());
         return;
       }
       void fetch("/api/signals", {
@@ -134,7 +134,11 @@ export function VideoWatch({ video, related }: { video: VideoCard; related?: Rea
       )}
 
       <div className="space-y-3 px-4 md:px-0">
-        {video.category ? <Badge variant="secondary">{video.category.title}</Badge> : null}
+        {video.topics.map((topic) => (
+          <Badge key={topic.id} variant="secondary">
+            {topic.title}
+          </Badge>
+        ))}
         {video.viewCount !== null || video.likeCount !== null || video.commentCount !== null ? (
           <p className="flex flex-wrap gap-x-4 text-xs text-text-secondary" data-testid="video-statistics">
             {video.viewCount !== null ? (

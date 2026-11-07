@@ -22,20 +22,20 @@ afterAll(() => prisma.$disconnect());
 describe("MongoDB through Prisma", () => {
   it("commits a transaction, which requires a replica set", async () => {
     await prisma.$transaction(async (tx) => {
-      await tx.category.create({ data: { title: "العقيدة", slug: "العقيدة" } });
-      await tx.category.create({ data: { title: "الفقه", slug: "الفقه" } });
+      await tx.topic.create({ data: { title: "العقيدة", slug: "العقيدة" } });
+      await tx.topic.create({ data: { title: "الفقه", slug: "الفقه" } });
     });
-    expect(await prisma.category.count()).toBe(2);
+    expect(await prisma.topic.count()).toBe(2);
   });
 
   it("rolls back every write when a transaction fails", async () => {
     await expect(
       prisma.$transaction(async (tx) => {
-        await tx.category.create({ data: { title: "العقيدة", slug: "العقيدة" } });
+        await tx.topic.create({ data: { title: "العقيدة", slug: "العقيدة" } });
         throw new Error("abort");
       }),
     ).rejects.toThrow("abort");
-    expect(await prisma.category.count()).toBe(0);
+    expect(await prisma.topic.count()).toBe(0);
   });
 
   it("rejects a duplicate YouTube video ID with a recognisable error", async () => {
@@ -46,11 +46,11 @@ describe("MongoDB through Prisma", () => {
   });
 
   it("prevents duplicate join records", async () => {
-    const video = await prisma.video.create({ data: videoData("abc123DEF45") });
+    const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: "UC1", title: "قناة" } });
     const topic = await prisma.topic.create({ data: { title: "الصلاة", slug: "الصلاة" } });
-    const link = { videoId: video.id, topicId: topic.id };
-    await prisma.videoTopic.create({ data: link });
-    const error = await prisma.videoTopic.create({ data: link }).catch((e: unknown) => e);
+    const link = { channelId: channel.id, topicId: topic.id };
+    await prisma.channelTopic.create({ data: link });
+    const error = await prisma.channelTopic.create({ data: link }).catch((e: unknown) => e);
     expect(isUniqueConstraintError(error)).toBe(true);
   });
 
@@ -88,11 +88,11 @@ describe("MongoDB through Prisma", () => {
   });
 
   it("removes join records when their parent is deleted", async () => {
-    const video = await prisma.video.create({ data: videoData("abc123DEF45") });
+    const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: "UC1", title: "قناة" } });
     const topic = await prisma.topic.create({ data: { title: "الصلاة", slug: "الصلاة" } });
-    await prisma.videoTopic.create({ data: { videoId: video.id, topicId: topic.id } });
-    await prisma.video.delete({ where: { id: video.id } });
-    expect(await prisma.videoTopic.count()).toBe(0);
+    await prisma.channelTopic.create({ data: { channelId: channel.id, topicId: topic.id } });
+    await prisma.youTubeChannel.delete({ where: { id: channel.id } });
+    expect(await prisma.channelTopic.count()).toBe(0);
     expect(await prisma.topic.count()).toBe(1);
   });
 });

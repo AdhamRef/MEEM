@@ -7,7 +7,6 @@ import { VideoEditor } from "@/components/admin/videos/video-editor";
 import { StateMessage } from "@/components/shared/state-message";
 import { Badge } from "@/components/ui/badge";
 import { strings } from "@/config/strings.ar";
-import { listActiveCategories } from "@/features/categories/categories.service";
 import { formatDuration } from "@/features/playlists/rules";
 import { canManageLink, linkTargetType, type LinkKind } from "@/features/relationships/links.service";
 import { getVideoForEditing } from "@/features/shorts/videos-admin.service";
@@ -22,7 +21,7 @@ const v = strings.videosAdmin;
 
 export const metadata = { title: strings.admin.shorts };
 
-const LINK_KINDS: LinkKind[] = ["video.topic", "video.library", "video.article"];
+const LINK_KINDS: LinkKind[] = ["video.library", "video.article"];
 
 export default async function EditVideoPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -37,7 +36,6 @@ export default async function EditVideoPage({ params }: { params: Promise<{ id: 
   });
   if (!video) return <StateMessage icon={FileX} title={strings.errors.notFound} />;
 
-  const categories = await listActiveCategories();
   const duration = formatDuration(video.durationSeconds);
 
   return (
@@ -89,9 +87,9 @@ export default async function EditVideoPage({ params }: { params: Promise<{ id: 
       <VideoEditor
         id={id}
         canEdit={hasPermission(actor, "content.editAny")}
-        categories={categories.map((category) => ({ id: category.id, title: category.title }))}
         onSave={assignVideoAction.bind(null, id)}
-        initial={{ kind: video.kind, categoryId: video.categoryId, ctaType: video.cta?.type ?? "", ctaLabel: video.cta?.label ?? "", ctaUrl: video.cta?.externalUrl ?? "", ctaTarget: video.ctaTarget }}
+        topicTitles={video.topicTitles}
+        initial={{ kind: video.kind, ctaType: video.cta?.type ?? "", ctaLabel: video.cta?.label ?? "", ctaUrl: video.cta?.externalUrl ?? "", ctaTarget: video.ctaTarget }}
       />
 
       <LinksManager ownerId={id} sections={LINK_KINDS.map((kind) => ({ kind, targetType: linkTargetType(kind), canManage: canManageLink(actor, kind) }))} />

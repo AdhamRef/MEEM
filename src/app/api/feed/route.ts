@@ -5,7 +5,7 @@ import { AppError } from "@/lib/errors";
 import { apiHandler } from "@/lib/http/api";
 import { clientAddress, enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
-const MAX_HINT_LENGTH = 4096;
+const MAX_HINT_LENGTH = 8000;
 
 /** Reads "id:score,id:score". The service validates what comes out. */
 function parseScores(raw: string | null): Record<string, number> {
@@ -19,10 +19,18 @@ function parseScores(raw: string | null): Record<string, number> {
   );
 }
 
+function parseIds(raw: string | null): string[] {
+  if (!raw) return [];
+  if (raw.length > MAX_HINT_LENGTH) throw new AppError("VALIDATION");
+  return raw.split(",");
+}
+
 function parseGuestHints(params: URLSearchParams): GuestFeedHints {
-  const interests = params.get("interests") ?? "";
-  if (interests.length > MAX_HINT_LENGTH) throw new AppError("VALIDATION");
-  return { selectedCategoryIds: interests ? interests.split(",") : [], behaviour: parseScores(params.get("behaviour")) };
+  const channelChoices = {
+    ...Object.fromEntries(parseIds(params.get("channelsOn")).map((id) => [id, true])),
+    ...Object.fromEntries(parseIds(params.get("channelsOff")).map((id) => [id, false])),
+  };
+  return { selectedTopicIds: parseIds(params.get("interests")), channelChoices, behaviour: parseScores(params.get("behaviour")) };
 }
 
 /** Reads stored data only. Rendering the feed never calls the YouTube API. */
@@ -32,9 +40,9 @@ export const GET = apiHandler(async (request: NextRequest) => {
   const params = request.nextUrl.searchParams;
   const page = await getFeedPage(await getCurrentActor(), {
     cursor: params.get("cursor"),
-    categoryId: params.get("categoryId"),
+    topicId: params.get("topicId"),
     guest: parseGuestHints(params),
-    session: { categories: parseScores(params.get("momentum")), channels: parseScores(params.get("channelMomentum")) },
+    session: { topics: parseScores(params.get("momentum")), channels: parseScores(params.get("channelMomentum")) },
   });
   return NextResponse.json(page, { headers: { "Cache-Control": "private, no-store" } });
 });

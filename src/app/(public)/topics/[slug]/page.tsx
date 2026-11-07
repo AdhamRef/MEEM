@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
+import { ChannelAvatar } from "@/components/preferences/channel-avatar";
 import { ArticleCard, cardGridClass, ContentSection, LibraryCard, PlaylistCard, ResourceCard, SectionPager, ShortsStrip, slugHref, TopicCard, VideoTile } from "@/components/knowledge/content-cards";
 import { ContentActions } from "@/components/knowledge/content-actions";
 import { ViewRecorder } from "@/components/knowledge/view-recorder";
@@ -37,7 +38,7 @@ export default async function TopicPage({ params, searchParams }: PageProps) {
   const path = slugHref("topics", topic.slug);
 
   const hasAnything =
-    playlists.length + sections.shorts.items.length + sections.videos.items.length + sections.articles.items.length + sections.resources.items.length + sections.children.length + sections.related.length + sections.complementary.length + sections.libraries.length >
+    sections.channels.length + playlists.length + sections.shorts.items.length + sections.videos.items.length + sections.articles.items.length + sections.resources.items.length + sections.children.length + sections.related.length + sections.complementary.length + sections.libraries.length >
     0;
 
   return (
@@ -73,6 +74,20 @@ export default async function TopicPage({ params, searchParams }: PageProps) {
       ) : null}
 
       <div className="mt-10 space-y-10">
+        <ContentSection id="channels" title={strings.topics.channels} isEmpty={sections.channels.length === 0}>
+          <ul className="scroll-row -mx-4 flex gap-4 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:px-0" data-testid="topic-channels">
+            {sections.channels.map((channel) => (
+              <li key={channel.id} className="flex w-24 shrink-0 flex-col items-center gap-2 text-center">
+                <ChannelAvatar title={channel.title} thumbnailUrl={channel.thumbnailUrl} className="size-20 rounded-full" />
+                <bdi dir="auto" className="line-clamp-2 text-sm">
+                  {channel.title}
+                </bdi>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-subtle">{strings.feed.source}</p>
+        </ContentSection>
+
         <ContentSection id="shorts" title={strings.topics.shorts} isEmpty={sections.shorts.items.length === 0}>
           <ShortsStrip videos={sections.shorts.items} />
           <SectionPager param="shorts" nextCursor={sections.shorts.nextCursor} isPaged={Boolean(cursors.shorts)} pathname={path} />

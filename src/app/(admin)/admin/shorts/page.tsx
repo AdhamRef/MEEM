@@ -6,7 +6,6 @@ import { StateMessage } from "@/components/shared/state-message";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { strings } from "@/config/strings.ar";
-import { listActiveCategories } from "@/features/categories/categories.service";
 import { formatDuration } from "@/features/playlists/rules";
 import { listVideosForAdmin } from "@/features/shorts/videos-admin.service";
 import { checkPageAccess } from "@/lib/auth/guards";
@@ -18,7 +17,7 @@ const v = strings.videosAdmin;
 export const metadata = { title: strings.admin.shorts };
 
 interface PageProps {
-  searchParams: Promise<{ query?: string; kind?: string; status?: string; review?: string; category?: string; cursor?: string }>;
+  searchParams: Promise<{ query?: string; kind?: string; status?: string; review?: string; cursor?: string }>;
 }
 
 const oneOf = <T extends string>(value: string | undefined, options: readonly T[]): T | undefined => (options as readonly string[]).includes(value ?? "") ? (value as T) : undefined;
@@ -33,13 +32,10 @@ export default async function AdminShortsPage({ searchParams }: PageProps) {
   const kind = oneOf(params.kind, ["SHORT", "LONG_FORM"] as const);
   const status = oneOf(params.status, ["DRAFT", "PUBLISHED", "ARCHIVED"] as const);
   const review = oneOf(params.review, ["NEEDS_REVIEW", "REVIEWED"] as const);
-  const categories = await listActiveCategories();
-  const categoryId = categories.find((category) => category.id === params.category)?.id;
-  const page = await listVideosForAdmin(actor, { query: params.query || undefined, kind, status, review, categoryId, cursor: params.cursor });
-  const categoryTitles = new Map(categories.map((category) => [category.id, category.title]));
+  const page = await listVideosForAdmin(actor, { query: params.query || undefined, kind, status, review, cursor: params.cursor });
 
   const nextParams = new URLSearchParams();
-  for (const [key, value] of Object.entries({ query: params.query, kind, status, review, category: categoryId, cursor: page.nextCursor })) if (value) nextParams.set(key, value);
+  for (const [key, value] of Object.entries({ query: params.query, kind, status, review, cursor: page.nextCursor })) if (value) nextParams.set(key, value);
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 px-4 py-8">
@@ -70,38 +66,28 @@ export default async function AdminShortsPage({ searchParams }: PageProps) {
           <option value="NEEDS_REVIEW">{v.needsReview}</option>
           <option value="REVIEWED">{v.reviewed}</option>
         </select>
-        <select name="category" defaultValue={categoryId ?? ""} aria-label={strings.adminContent.category} className={selectClass}>
-          <option value="">{v.allCategories}</option>
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.title}
-            </option>
-          ))}
-        </select>
         <Button type="submit" variant="secondary">
           {strings.adminContent.searchAction}
         </Button>
       </form>
 
       <BulkList
-        key={JSON.stringify({ query: params.query, kind, status, review, categoryId })}
+        key={JSON.stringify({ query: params.query, kind, status, review })}
         total={page.total}
-        onListIds={listMatchingVideoIdsAction.bind(null, { ...(params.query ? { query: params.query } : {}), ...(kind ? { kind } : {}), ...(status ? { status } : {}), ...(review ? { review } : {}), ...(categoryId ? { categoryId } : {}) })}
+        onListIds={listMatchingVideoIdsAction.bind(null, { ...(params.query ? { query: params.query } : {}), ...(kind ? { kind } : {}), ...(status ? { status } : {}), ...(review ? { review } : {}) })}
         showKind
         canEdit={hasPermission(actor, "content.editAny")}
         canPublish={hasPermission(actor, "content.publish")}
-        categories={categories.map((category) => ({ id: category.id, title: category.title }))}
         onAssign={bulkAssignVideosAction}
         onPublish={bulkPublishVideosAction}
-        emptyMessage={params.query || kind || status || review || categoryId ? strings.adminContent.noResults : v.empty}
+        emptyMessage={params.query || kind || status || review ? strings.adminContent.noResults : v.empty}
         rows={page.items.map((row) => {
           const duration = formatDuration(row.durationSeconds);
-          const category = row.categoryId ? categoryTitles.get(row.categoryId) : null;
           return {
             id: row.id,
             href: `/admin/shorts/${row.id}`,
             title: row.title || v.withdrawn,
-            hint: [row.kind === "SHORT" ? strings.content.short : strings.content.longVideo, row.channelTitle, strings.feed.source, duration, category].filter(Boolean).join(" · "),
+            hint: [row.kind === "SHORT" ? strings.content.short : strings.content.longVideo, row.channelTitle, strings.feed.source, duration].filter(Boolean).join(" · "),
             thumbnailUrl: row.thumbnailUrl,
             status: row.status,
             isArchived: row.isArchived,

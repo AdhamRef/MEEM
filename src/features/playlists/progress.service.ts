@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { parseId } from "@/features/content/common";
 import { publicVideoFilter } from "@/features/shorts/video-cards";
 import { AppError, isUniqueConstraintError } from "@/lib/errors";

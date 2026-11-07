@@ -2,10 +2,10 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { strings } from "@/config/strings.ar";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema, topicInputSchema, topicUpdateSchema } from "@/features/categories/schemas";
+import { objectIdSchema, topicInputSchema, topicUpdateSchema } from "@/features/topics/schemas";
 import { articleCardSelect, libraryCardSelect, resourceCardSelect, topicCardSelect } from "@/features/content/cards";
 import { cursorArgs, parseOptionalCursor, publicContentFilter, resolveSlug, toCursorPage } from "@/features/content/common";
-import { pullFromVideoArray, purgeContentReferences } from "@/features/relationships/references";
+import { purgeContentReferences } from "@/features/relationships/references";
 import { publicVideoFilter, toVideoCards, videoCardSelect } from "@/features/shorts/video-cards";
 import { AppError, isUniqueConstraintError } from "@/lib/errors";
 import { assertPermission, type Actor } from "@/lib/permissions";
@@ -19,6 +19,8 @@ const MAX_PAGE_SIZE = 60;
 const MAX_TOPIC_DEPTH = 32;
 const SECTION_PAGE_SIZE = 12;
 const ADMIN_PAGE_SIZE = 25;
+/** Well above any realistic topic. It only exists so a query is never unbounded. */
+const MAX_TOPIC_CHANNELS = 200;
 
 /** Every public query uses this, so draft or archived topics can never appear by accident. */
 const publicTopicFilter = { status: "PUBLISHED", isArchived: false } satisfies Prisma.TopicWhereInput;
@@ -27,11 +29,6 @@ function parseId(rawId: unknown): string {
   const parsed = objectIdSchema.safeParse(rawId);
   if (!parsed.success) throw new AppError("VALIDATION");
   return parsed.data;
-}
-
-async function assertValidCategory(tx: Prisma.TransactionClient, categoryId: string): Promise<void> {
-  const category = await tx.category.findUnique({ where: { id: categoryId }, select: { id: true } });
-  if (!category) throw new AppError("VALIDATION");
 }
 
 /** Walks up from the proposed parent. Finding the topic itself means a cycle. */
@@ -60,7 +57,6 @@ export async function createTopic(actor: Actor | null, rawInput: unknown) {
 
   try {
     return await withTransaction(async (tx) => {
-      if (input.categoryId) await assertValidCategory(tx, input.categoryId);
       if (input.parentId) await assertValidParent(tx, input.parentId);
       const slug = await resolveSlug(input.title, input.slug, async (candidate) => (await tx.topic.count({ where: { slug: candidate } })) > 0);
 
@@ -103,7 +99,6 @@ export async function updateTopic(actor: Actor | null, rawId: unknown, rawInput:
       if (!existing) throw new AppError("NOT_FOUND");
       // A published address may already be shared or linked from elsewhere.
       if (existing.status === "PUBLISHED" && input.slug && input.slug !== existing.slug) throw new AppError("CONFLICT", strings.content.slugLocked);
-      if (input.categoryId) await assertValidCategory(tx, input.categoryId);
       if (input.parentId) await assertValidParent(tx, input.parentId, id);
 
       const merged = { ...existing, ...input };
@@ -191,7 +186,7 @@ export async function listPublishedTopics(options: { cursor?: string; limit?: nu
     orderBy: { id: "desc" },
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    select: { id: true, title: true, slug: true, introduction: true, coverImage: true, categoryId: true, isFeatured: true },
+    select: { id: true, title: true, slug: true, introduction: true, coverImage: true, isFeatured: true },
   });
 
   const hasMore = topics.length > limit;
@@ -209,7 +204,6 @@ export async function deleteTopic(actor: Actor | null, rawId: unknown): Promise<
     if (!existing) throw new AppError("NOT_FOUND");
 
     await purgeContentReferences(tx, "TOPIC", id);
-    await pullFromVideoArray(tx, "topicIds", id);
     await tx.topic.updateMany({ where: { parentId: id }, data: { parentId: null } });
     await tx.topicRelation.deleteMany({ where: { OR: [{ fromTopicId: id }, { toTopicId: id }] } });
     await tx.topic.delete({ where: { id } });
@@ -247,10 +241,9 @@ export async function listFeaturedTopics(limit = 6) {
   return prisma.topic.findMany({ where: { ...publicContentFilter, isFeatured: true }, orderBy: [{ displayOrder: "asc" }, { id: "desc" }], take: limit, select: topicCardSelect });
 }
 
-/** A category narrows the list to it. */
-export async function listPublicTopics(options: { cursor?: unknown; categoryId?: string } = {}) {
+export async function listPublicTopics(options: { cursor?: unknown } = {}) {
   const rows = await prisma.topic.findMany({
-    where: { ...publicContentFilter, ...(options.categoryId ? { categoryId: options.categoryId } : {}) },
+    where: publicContentFilter,
     orderBy: [{ displayOrder: "asc" }, { id: "desc" }],
     take: DEFAULT_PAGE_SIZE + 1,
     ...cursorArgs(parseOptionalCursor(options.cursor)),
@@ -266,9 +259,19 @@ export interface TopicSectionCursors {
   resources?: unknown;
 }
 
-/** Empty sections come back empty, and the page hides them (§11.1). Only public items are read. */
+/**
+ * Empty sections come back empty, and the page hides them (§11.1). Only public items are read.
+ * A topic's videos are all those of its channels, so nobody has to attach them one by one.
+ */
 export async function getTopicSections(topicId: string, parentId: string | null, cursors: TopicSectionCursors = {}) {
-  const videoWhere = { ...publicVideoFilter, topicIds: { has: topicId } };
+  const channelLinks = await prisma.channelTopic.findMany({
+    where: { topicId, channel: { title: { not: "" } } },
+    take: MAX_TOPIC_CHANNELS,
+    orderBy: { id: "asc" },
+    select: { channel: { select: { id: true, title: true, handle: true, thumbnailUrl: true } } },
+  });
+  const channels = channelLinks.map((link) => link.channel);
+  const videoWhere = { ...publicVideoFilter, channelId: { in: channels.map((channel) => channel.id) } };
   const newestFirst = [{ publishedAt: "desc" as const }, { id: "desc" as const }];
 
   const [shortRows, videoRows, articleRows, resourceRows, children, relations, libraryLinks, parent] = await Promise.all([
@@ -304,6 +307,7 @@ export async function getTopicSections(topicId: string, parentId: string | null,
 
   return {
     parent,
+    channels,
     shorts: { items: await toVideoCards(shorts.items), nextCursor: shorts.nextCursor },
     videos: { items: await toVideoCards(videos.items), nextCursor: videos.nextCursor },
     articles: toCursorPage(articleRows, SECTION_PAGE_SIZE),

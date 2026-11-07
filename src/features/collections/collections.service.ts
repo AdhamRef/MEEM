@@ -3,7 +3,7 @@ import { randomInt } from "node:crypto";
 import { z } from "zod";
 import { strings } from "@/config/strings.ar";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { conflictOnDuplicate, cursorArgs, optionalText, parseId, parseOptionalCursor, publicContentFilter, resolveSlug, toCursorPage } from "@/features/content/common";
 import { resolveInOrder, type ResolvedContent } from "@/features/content/resolve";
 import { videoPickerLabel, type PickerItem, type PickerType } from "@/features/relationships/picker.service";

@@ -183,8 +183,6 @@ type ImportError {
 
 type ImportAssignment {
   kind        VideoKind?
-  categoryId  String?    @db.ObjectId
-  topicIds    String[]   @db.ObjectId
   libraryIds  String[]   @db.ObjectId
   playlistIds String[]   @db.ObjectId
 }
@@ -211,6 +209,7 @@ model User {
   sessions        Session[]
   preference      UserPreference?
   interests       UserInterest[]
+  channelChoices  UserChannelChoice[]
   favorites       Favorite[]
   activities      UserActivity[]
   viewingProgress ViewingProgress[]
@@ -254,22 +253,23 @@ model Session {
 }
 
 model UserPreference {
-  id                 String    @id @default(auto()) @map("_id") @db.ObjectId
-  userId             String    @unique @db.ObjectId
-  onboardingDoneAt   DateTime?
-  onboardingSkipped  Boolean   @default(false)
-  prefersSoundOn     Boolean   @default(false)
-  privacyNoticeSeen  Boolean   @default(false)
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String    @unique @db.ObjectId
+  onboardingDoneAt  DateTime?
+  onboardingSkipped Boolean   @default(false)
+  prefersSoundOn    Boolean   @default(false)
+  privacyNoticeSeen Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+/// A topic the person chose, or has signals about. Scoring works on topics (owner's decision, 2026-11-07).
 model UserInterest {
   id             String    @id @default(auto()) @map("_id") @db.ObjectId
   userId         String    @db.ObjectId
-  categoryId     String    @db.ObjectId
+  topicId        String    @db.ObjectId
   isSelected     Boolean   @default(false)
   explicitWeight Float     @default(0)
   behaviourScore Float     @default(0)
@@ -277,11 +277,26 @@ model UserInterest {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, categoryId])
-  @@index([categoryId])
+  @@unique([userId, topicId])
+  @@index([topicId])
+}
+
+/// A channel the person switched by hand. Every other channel follows their topics, so only
+/// differences are stored, and channels added later still get the right default.
+model UserChannelChoice {
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String  @db.ObjectId
+  channelId String  @db.ObjectId
+  isEnabled Boolean
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel YouTubeChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, channelId])
+  @@index([channelId])
 }
 
 /// Polymorphic: entity existence is checked by the favourites service.
@@ -306,7 +321,7 @@ model UserActivity {
   entityType ContentType
   entityId   String         @db.ObjectId
   action     ActivityAction
-  categoryId String?        @db.ObjectId
+  channelId  String?        @db.ObjectId
   occurredAt DateTime       @default(now())
   expiresAt  DateTime?
 
@@ -314,6 +329,7 @@ model UserActivity {
 
   @@index([userId, occurredAt])
   @@index([userId, action, occurredAt])
+  @@index([userId, action, channelId, occurredAt])
   @@index([entityType, entityId, occurredAt])
   @@index([action, occurredAt])
 }
@@ -344,31 +360,6 @@ model ViewingProgress {
 // Taxonomy and knowledge
 // ---------------------------------------------------------------------------
 
-model Category {
-  id           String   @id @default(auto()) @map("_id") @db.ObjectId
-  title        String
-  slug         String   @unique
-  description  String?
-  icon         String?
-  coverImage   String?
-  displayOrder Int      @default(0)
-  isActive     Boolean  @default(true)
-  parentId     String?  @db.ObjectId
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children Category[] @relation("CategoryTree")
-
-  interests UserInterest[]
-  topics    Topic[]
-  videos    Video[]
-  articles  Article[]
-
-  @@index([parentId])
-  @@index([isActive, displayOrder])
-}
-
 model Topic {
   id           String        @id @default(auto()) @map("_id") @db.ObjectId
   title        String
@@ -376,7 +367,6 @@ model Topic {
   introduction String?
   description  String?
   coverImage   String?
-  categoryId   String?       @db.ObjectId
   parentId     String?       @db.ObjectId
   isFeatured   Boolean       @default(false)
   displayOrder Int           @default(0)
@@ -389,21 +379,20 @@ model Topic {
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
-  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  parent   Topic?    @relation("TopicTree", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children Topic[]   @relation("TopicTree")
+  parent   Topic?  @relation("TopicTree", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children Topic[] @relation("TopicTree")
 
   relationsFrom TopicRelation[] @relation("TopicRelationFrom")
   relationsTo   TopicRelation[] @relation("TopicRelationTo")
   articles      ArticleTopic[]
-  videos        VideoTopic[]
+  channels      ChannelTopic[]
+  interests     UserInterest[]
   playlists     PlaylistTopic[]
   resources     ResourceTopic[]
   libraries     LibraryTopic[]
 
   @@index([status, isArchived, updatedAt])
   @@index([status, isArchived, isFeatured, displayOrder])
-  @@index([categoryId])
   @@index([parentId])
   @@index([titleSearch])
 }
@@ -538,8 +527,10 @@ model YouTubeChannel {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  videos     Video[]
-  importJobs ImportJob[]
+  videos      Video[]
+  importJobs  ImportJob[]
+  topics      ChannelTopic[]
+  userChoices UserChannelChoice[]
 
   @@index([isActive])
   @@index([handle])
@@ -558,8 +549,7 @@ model Video {
   archivedAt     DateTime?
   publishedAt    DateTime?
 
-  channelId  String? @db.ObjectId
-  categoryId String? @db.ObjectId
+  channelId String? @db.ObjectId
 
   // YouTube-sourced data, refreshed at least every 30 days. Never edited locally.
   title             String
@@ -578,8 +568,8 @@ model Video {
 
   cta VideoCta?
 
-  /// Copies of the join models for fast feed filtering. The video service is the only writer.
-  topicIds   String[] @db.ObjectId
+  /// A copy of the join model for fast filtering. The video service is the only writer.
+  /// Topics aren't copied: a video's topics are always its channel's (ChannelTopic).
   libraryIds String[] @db.ObjectId
 
   /// Random integer giving a stable, even feed order without a popularity bias.
@@ -591,23 +581,19 @@ model Video {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  channel  YouTubeChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
-  category Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  channel YouTubeChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
 
-  topics          VideoTopic[]
   libraries       VideoLibrary[]
   articles        ArticleVideo[]
   playlistItems   PlaylistItem[]
   viewingProgress ViewingProgress[]
 
-  @@index([status, isArchived, availability, kind, categoryId, feedKey, id])
-  @@index([status, isArchived, availability, kind, categoryId, channelId, feedKey, id])
+  @@index([status, isArchived, availability, kind, channelId, feedKey, id])
   @@index([status, isArchived, availability, kind, feedKey, id])
   @@index([status, isArchived, kind, publishedAt])
-  @@index([topicIds, status, publishedAt])
+  @@index([channelId, status, isArchived, kind, publishedAt])
   @@index([libraryIds, status, publishedAt])
   @@index([channelId, ytPublishedAt])
-  @@index([categoryId])
   @@index([metadataFetchedAt])
   @@index([titleSearch])
 }
@@ -632,7 +618,6 @@ model Article {
   publishedAt    DateTime?
   /// Chosen by editors for Explore's selected articles (§16).
   isFeatured     Boolean          @default(false)
-  categoryId     String?          @db.ObjectId
   authorId       String?          @db.ObjectId
   /// Contributors may only edit drafts assigned to them (§19.4).
   assigneeIds    String[]         @db.ObjectId
@@ -641,8 +626,7 @@ model Article {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  author   User?     @relation("ArticleAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  author User? @relation("ArticleAuthor", fields: [authorId], references: [id], onDelete: SetNull)
 
   topics    ArticleTopic[]
   libraries ArticleLibrary[]
@@ -651,7 +635,6 @@ model Article {
 
   @@index([status, isArchived, publishedAt])
   @@index([status, isArchived, isFeatured, publishedAt])
-  @@index([categoryId, status, publishedAt])
   @@index([authorId])
   @@index([assigneeIds])
   @@index([titleSearch])
@@ -807,15 +790,17 @@ model ArticlePlaylist {
   @@index([playlistId])
 }
 
-model VideoTopic {
-  id      String @id @default(auto()) @map("_id") @db.ObjectId
-  videoId String @db.ObjectId
-  topicId String @db.ObjectId
+/// Which topics a channel belongs to. Every video of the channel belongs to them too, so
+/// nobody has to sort videos one by one (owner's decision, 2026-11-07).
+model ChannelTopic {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  channelId String @db.ObjectId
+  topicId   String @db.ObjectId
 
-  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  channel YouTubeChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  topic   Topic          @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
-  @@unique([videoId, topicId])
+  @@unique([channelId, topicId])
   @@index([topicId])
 }
 
@@ -960,15 +945,15 @@ model ImportCandidate {
 /// Append-only. Never removed automatically (§20.4). actorEmail is a snapshot, so the
 /// record stays meaningful after the account changes.
 model AuditLog {
-  id         String   @id @default(auto()) @map("_id") @db.ObjectId
-  actorId    String?  @db.ObjectId
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  actorId    String?   @db.ObjectId
   actorEmail String?
   actorRole  UserRole?
   action     String
   entityType String
   entityId   String?
   metadata   Json?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
 
   @@index([createdAt])
   @@index([actorId, createdAt])

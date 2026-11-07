@@ -28,7 +28,7 @@ Copy `.env.example` to `.env`, which git ignores, and fill it in. Settings are c
 
 Apply the schema with `npm run db:sync`, and **never `prisma db push` alone,** which removes the text and expiry indexes. Without them, search fails and expired data stays. Run `npm run db:sync` after pulling any change to `prisma/schema.prisma` or `prisma/mongo-indexes.ts`.
 
-`npm run db:seed-taxonomy` adds any missing starting categories, and never overwrites existing ones.
+`npm run db:seed-taxonomy` adds any missing starting topics, and never overwrites existing ones.
 
 ## Google sign-in
 

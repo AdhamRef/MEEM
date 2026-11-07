@@ -1,14 +1,17 @@
 import type { PrismaClient } from "@prisma/client";
 
-export const SEEDED_SHORTS_PER_CATEGORY = 5;
-export const SEEDED_CATEGORY_SLUGS = ["الفقه", "العقيدة", "النبوة", "التزكية"];
+export const SEEDED_SHORTS_PER_TOPIC = 5;
+export const SEEDED_TOPIC_SLUGS = ["الفقه", "العقيدة", "النبوة", "التزكية"];
+
+/** What a person with no saved choices looks like in the browser, past the first-visit choices. */
+export const SKIPPED_FIRST_VISIT = JSON.stringify({ version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "skipped" });
 
 /** Fixed 11-character IDs, so a reused database stays the same. They exist only in this test database. */
 const youtubeId = (group: string, index: number) => `e2e${group}${String(index).padStart(6, "0")}`;
 
 const thumbnails = (id: string) => [{ quality: "high", url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`, width: 480, height: 360 }];
 
-const fields = (id: string, title: string) => ({
+const fields = (id: string, title: string, channelTitle: string) => ({
   kind: "SHORT" as const,
   classification: "SHORT_CANDIDATE" as const,
   reviewedAt: new Date(),
@@ -17,30 +20,46 @@ const fields = (id: string, title: string) => ({
   availability: "AVAILABLE" as const,
   title,
   description: "وصف المقطع للاختبار",
-  channelTitle: "قناة الاختبار",
+  channelTitle,
   thumbnails: thumbnails(id),
   durationSeconds: 45,
   metadataFetchedAt: new Date(),
 });
 
+export const seededChannelTitle = (slug: string) => `قناة ${slug}`;
+
+/** One channel per seeded topic, and every video follows its channel into that topic. */
+async function seedChannel(prisma: PrismaClient, slug: string, index: number) {
+  const topic = await prisma.topic.findUniqueOrThrow({ where: { slug } });
+  const youtubeChannelId = `UCe2e${String(index).padStart(19, "0")}`;
+  const data = { title: seededChannelTitle(slug), handle: `@e2e${index}`, metadataFetchedAt: new Date(), isActive: true };
+  const channel = await prisma.youTubeChannel.upsert({ where: { youtubeChannelId }, update: data, create: { youtubeChannelId, ...data } });
+  await prisma.channelTopic.upsert({
+    where: { channelId_topicId: { channelId: channel.id, topicId: topic.id } },
+    update: {},
+    create: { channelId: channel.id, topicId: topic.id },
+  });
+  return channel;
+}
+
 export async function seedFeed(prisma: PrismaClient): Promise<void> {
   let feedKey = 1000;
 
-  for (const [categoryIndex, slug] of SEEDED_CATEGORY_SLUGS.entries()) {
-    const category = await prisma.category.findUniqueOrThrow({ where: { slug } });
+  for (const [topicIndex, slug] of SEEDED_TOPIC_SLUGS.entries()) {
+    const channel = await seedChannel(prisma, slug, topicIndex);
 
-    for (let index = 0; index < SEEDED_SHORTS_PER_CATEGORY; index += 1) {
-      const id = youtubeId(`c${categoryIndex}`, index);
+    for (let index = 0; index < SEEDED_SHORTS_PER_TOPIC; index += 1) {
+      const id = youtubeId(`c${topicIndex}`, index);
       feedKey += 1000;
-      const data = { ...fields(id, `مقطع ${slug} ${index + 1}`), categoryId: category.id, feedKey };
+      const data = { ...fields(id, `مقطع ${slug} ${index + 1}`, channel.title), channelId: channel.id, feedKey };
       await prisma.video.upsert({ where: { youtubeVideoId: id }, update: data, create: { youtubeVideoId: id, ...data } });
     }
   }
 
-  const category = await prisma.category.findUniqueOrThrow({ where: { slug: "الفقه" } });
+  const channel = await prisma.youTubeChannel.findFirstOrThrow({ where: { title: seededChannelTitle("الفقه") } });
   const special = async (id: string, title: string, extra: Record<string, unknown>) => {
     feedKey += 1000;
-    const data = { ...fields(id, title), categoryId: category.id, feedKey, ...extra };
+    const data = { ...fields(id, title, channel.title), channelId: channel.id, feedKey, ...extra };
     return prisma.video.upsert({ where: { youtubeVideoId: id }, update: data, create: { youtubeVideoId: id, ...data } });
   };
 

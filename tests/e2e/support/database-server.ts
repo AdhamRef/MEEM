@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { PrismaClient } from "@prisma/client";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
-import { seedTaxonomy } from "../../../src/features/categories/seed-taxonomy";
+import { seedTopics } from "../../../src/features/topics/seed-topics";
 import { ensureMongoIndexes } from "../../../src/lib/prisma/ensure-indexes";
 import { E2E_DATABASE_PORT, E2E_DATABASE_READY_PORT, E2E_DATABASE_URL } from "./constants";
 import { seedFeed } from "./seed-feed";
@@ -30,7 +30,7 @@ await promisify(execFile)(process.execPath, [resolve("node_modules/prisma/build/
 const prisma = new PrismaClient({ datasources: { db: { url: E2E_DATABASE_URL } } });
 // What npm run db:sync does after pushing. Search needs these text indexes.
 await ensureMongoIndexes(prisma);
-await seedTaxonomy(prisma);
+await seedTopics(prisma);
 await seedFeed(prisma);
 await prisma.$disconnect();
 

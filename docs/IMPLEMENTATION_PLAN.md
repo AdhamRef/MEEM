@@ -26,6 +26,7 @@ Status: approved by the project owner, 2026-11-04. The content below is the plan
 | D6 | YouTube statistics | Build the feature, but **default it to off** until the audit confirms it is allowed | See R2. The spec already treats statistics as optional. |
 | D7 | Hosting | Stay **provider-neutral** unless you have a target | The design works on a VPS or serverless. Tell me if you've already chosen, since local file storage won't persist on serverless. |
 | D8 | Execution and git | Pause for your review **after Phase 1 only**, then continue automatically as §1.4 says. Create `main` and make one commit per passed phase. | Phase 1 validates the riskiest assumptions. I won't commit without this approval. |
+| D9 | Topics and channels (owner's decision, 2026-11-07) | **Channels are assigned to topics, and a video's topics are its channel's.** Topics replace categories everywhere, and the `Category` model is gone, which replaces D4. First-visit choices fill the screen: pick topics, then a grid of channels with those topics' channels on and the rest off. They can be skipped, shared links bypass them, and they can be changed at `/interests` at any time. Switches affect the personal feed only. | Sorting videos one by one wasn't workable for the team. Differs from specification §9 (categories, and an optional prompt), §10 (categories), and §13.1 (Shorts ↔ Topics per item). Skipping stays, as §9.1 requires. |
 
 ## 3. Stack and compatibility findings
 

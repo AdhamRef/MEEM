@@ -25,7 +25,7 @@ export async function purgeContentReferences(tx: Prisma.TransactionClient, type:
 }
 
 /** Prisma can't remove one value from an array across many documents, and this can be thousands. */
-export async function pullFromVideoArray(tx: Prisma.TransactionClient, field: "topicIds" | "libraryIds", id: string, videoIds?: string[]): Promise<void> {
+export async function pullFromVideoArray(tx: Prisma.TransactionClient, field: "libraryIds", id: string, videoIds?: string[]): Promise<void> {
   const value = { $oid: id };
   const query: Prisma.InputJsonObject = videoIds ? { [field]: value, _id: { $in: videoIds.map((videoId) => ({ $oid: videoId })) } } : { [field]: value };
   await tx.$runCommandRaw({ update: "Video", updates: [{ q: query, u: { $pull: { [field]: value } }, multi: true }] });

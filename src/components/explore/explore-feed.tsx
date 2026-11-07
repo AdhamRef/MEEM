@@ -15,16 +15,16 @@ const e = strings.explore;
 const CHUNK_SIZE = 12;
 
 interface ExploreFeedProps {
-  categoryId: string | null;
+  topicId: string | null;
   initialVideos: FeedPage;
   initialShorts: FeedPage;
   /** Editorial rows, made on the server, placed between the videos. */
   shelves: ReactNode[];
 }
 
-async function fetchPage(kind: "SHORT" | "LONG_FORM", categoryId: string | null, cursor: string, size: number): Promise<FeedPage> {
+async function fetchPage(kind: "SHORT" | "LONG_FORM", topicId: string | null, cursor: string, size: number): Promise<FeedPage> {
   const params = new URLSearchParams({ kind, cursor, size: String(size) });
-  if (categoryId) params.set("categoryId", categoryId);
+  if (topicId) params.set("topicId", topicId);
   const response = await fetch(`/api/explore/videos?${params.toString()}`);
   if (!response.ok) throw new Error(`Explore request failed with status ${response.status}`);
   return (await response.json()) as FeedPage;
@@ -37,7 +37,7 @@ const chunked = <T,>(items: T[], size: number): T[][] => Array.from({ length: Ma
  * editorial shelf between each stretch. Once long videos run out, Shorts carry on as a grid,
  * so nothing is hidden behind a limit.
  */
-export function ExploreFeed({ categoryId, initialVideos, initialShorts, shelves }: ExploreFeedProps) {
+export function ExploreFeed({ topicId, initialVideos, initialShorts, shelves }: ExploreFeedProps) {
   const [videos, setVideos] = useState<VideoCard[]>(initialVideos.items);
   const [shorts, setShorts] = useState<VideoCard[]>(initialShorts.items);
   const [videoCursor, setVideoCursor] = useState(initialVideos.nextCursor);
@@ -58,9 +58,9 @@ export function ExploreFeed({ categoryId, initialVideos, initialShorts, shelves 
     setStatus("loading");
     try {
       const [videoPage, shortsPage] = await Promise.all([
-        videoCursor ? fetchPage("LONG_FORM", categoryId, videoCursor, EXPLORE_LONG_PAGE) : null,
+        videoCursor ? fetchPage("LONG_FORM", topicId, videoCursor, EXPLORE_LONG_PAGE) : null,
         // With long videos finished, Shorts are all that's left, so they come in larger pages.
-        shortsCursor ? fetchPage("SHORT", categoryId, shortsCursor, videoCursor ? EXPLORE_SHORTS_PAGE : EXPLORE_LONG_PAGE) : null,
+        shortsCursor ? fetchPage("SHORT", topicId, shortsCursor, videoCursor ? EXPLORE_SHORTS_PAGE : EXPLORE_LONG_PAGE) : null,
       ]);
       if (videoPage) {
         setVideos((current) => [...current, ...videoPage.items]);
@@ -77,7 +77,7 @@ export function ExploreFeed({ categoryId, initialVideos, initialShorts, shelves 
     } finally {
       isBusyRef.current = false;
     }
-  }, [categoryId, shortsCursor, videoCursor]);
+  }, [topicId, shortsCursor, videoCursor]);
 
   useEffect(() => {
     const sentinel = sentinelRef.current;

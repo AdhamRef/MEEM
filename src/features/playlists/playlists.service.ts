@@ -3,7 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { strings } from "@/config/strings.ar";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { articleCardSelect, libraryCardSelect, topicCardSelect } from "@/features/content/cards";
 import { conflictOnDuplicate, cursorArgs, imageUrlSchema, optionalSlugSchema, optionalText, parseId, parseOptionalCursor, resolveSlug, toCursorPage } from "@/features/content/common";
 import { videoPickerLabel } from "@/features/relationships/picker.service";

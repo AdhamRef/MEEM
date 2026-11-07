@@ -9,7 +9,7 @@ For the volunteers who run the platform. Open the dashboard at `/admin`. You'll 
 | Contributor | Write drafts, and edit drafts they wrote or were assigned |
 | Scientific reviewer | Read everything, leave review notes, and edit drafts assigned to them. Notes never block publishing. |
 | Editor | Write and edit any content, and manage topics, libraries, playlists, and relationships |
-| Admin | All of the above, plus publishing, archiving, deleting, importing from YouTube, categories, and viewing users and the activity log |
+| Admin | All of the above, plus publishing, archiving, deleting, importing from YouTube, and viewing users and the activity log |
 | Super admin | All of the above, plus roles and settings |
 
 **Publishing is separate from editing.** Editors and contributors need an individual permission from the super admin to publish. The super admin can also grant contributors and reviewers extra permissions.
@@ -22,7 +22,7 @@ Use **YouTube Channel Importer**.
 2. Wait while the videos are fetched. You can close the page at any time and come back to it from the list of imports.
 3. Review the list. Use the filter to see Short candidates, long-form candidates, what's already imported, and what you've selected.
 4. Tick the videos you want, or use **Select all** to take everything the filter shows, across every page.
-5. Optionally, classify what you've selected: its kind, category, topics, libraries, and series. Press **Apply to selected**.
+5. Optionally, classify what you've selected: its kind, libraries, and series. Press **Apply to selected**. Topics aren't chosen here, because videos follow their channel's topics.
 6. Press **Import selected**. The numbers at the top report what was imported, already existed, was skipped, or failed.
 
 **Nothing goes live by importing.** Every imported video is a draft.
@@ -37,15 +37,24 @@ Use **YouTube Channel Importer**.
 
 Each card has a **stop** button, which ends the job at once, and a **delete** button, which removes the job and its list of fetched videos. Both ask first. Videos you already imported stay as drafts either way. Starting a channel that has an unfinished job takes you to that job rather than making a second one.
 
+## Giving channels their topics
+
+**This is the one place video topics are decided.** Every video of a channel belongs to all of its topics, including videos imported later.
+
+1. Open **YouTube channels**, then press **Edit topics** on a channel. You can also open a topic and add channels under **Channels**. Both change the same link.
+2. Search for a topic and pick it. A channel can have several. Changes save immediately and reach visitors within a minute or so.
+
+A topic shows on the first visit only once it's published and has a channel with a published video. Visitors who chose that topic get its channels switched on by default.
+
 ## Publishing videos
 
-Use **Videos**. A video can be published as long as it's available on YouTube, can be embedded, and isn't archived. **A category is optional, and you can add it later.** Videos without one appear in the main feed, but not under a category.
+Use **Videos**. A video can be published as long as it's available on YouTube, can be embedded, and isn't archived. Its topics come from its channel, so there's nothing to sort. Until a channel has a topic, its videos appear only for people who haven't chosen topics, and not under any topic.
 
 Pressing **Publish** counts as your review of that video. The kind, Short or long, is a suggestion based on length, so a short wide video may be labelled a Short until someone corrects it.
 
-To do many at once, tick them, or use the select-all box to take everything your filters match across every page, then press **Publish**. It skips only videos that can't play, and tells you how many. You can add a kind and category the same way, before or after.
+To do many at once, tick them, or use the select-all box to take everything your filters match across every page, then press **Publish**. It skips only videos that can't play, and tells you how many. You can set the kind the same way, before or after.
 
-On a video's own page you can also add a button that leads viewers to an article, topic, playlist, the full video, or another site, and link it to topics, libraries, and articles.
+On a video's own page you can also add a button that leads viewers to an article, topic, playlist, the full video, or another site, and link it to libraries and articles.
 
 YouTube's title and description can't be edited. YouTube requires this.
 
@@ -80,7 +89,7 @@ Explore is the same for everyone, and most of it comes from choices you make:
 
 | Section | What decides it |
 |---|---|
-| Categories | Active categories, in their display order |
+| Topic chips | Published topics that have a channel, in their display order |
 | Featured topics | Topics marked as featured |
 | Collections | Published collections, up to 6, by display order |
 | Knowledge libraries | Top-level libraries, featured ones first |

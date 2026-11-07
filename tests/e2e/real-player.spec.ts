@@ -20,14 +20,20 @@ const REAL_VIDEOS = [
   { youtubeVideoId: "M7lc1UVf-VE", title: "YouTube Developers Live" },
   { youtubeVideoId: "jNQXAC9IVRw", title: "Me at the zoo" },
 ];
-const CATEGORY_SLUG = "real-player-test";
+const TOPIC_SLUG = "real-player-test";
 
 test.beforeAll(async () => {
-  const category = await prisma.category.upsert({
-    where: { slug: CATEGORY_SLUG },
+  const topic = await prisma.topic.upsert({
+    where: { slug: TOPIC_SLUG },
     update: {},
-    create: { slug: CATEGORY_SLUG, title: "اختبار المشغل", displayOrder: 100_000 },
+    create: { slug: TOPIC_SLUG, title: "اختبار المشغل", displayOrder: 100_000, status: "PUBLISHED" },
   });
+  const channel = await prisma.youTubeChannel.upsert({
+    where: { youtubeChannelId: "UCrealplayertest" },
+    update: {},
+    create: { youtubeChannelId: "UCrealplayertest", title: "YouTube", metadataFetchedAt: new Date() },
+  });
+  await prisma.channelTopic.upsert({ where: { channelId_topicId: { channelId: channel.id, topicId: topic.id } }, update: {}, create: { channelId: channel.id, topicId: topic.id } });
   for (const [index, video] of REAL_VIDEOS.entries()) {
     const data = {
       ...video,
@@ -40,15 +46,15 @@ test.beforeAll(async () => {
       thumbnails: [{ quality: "high", url: `https://i.ytimg.com/vi/${video.youtubeVideoId}/hqdefault.jpg` }],
       durationSeconds: 60,
       metadataFetchedAt: new Date(),
-      categoryId: category.id,
+      channelId: channel.id,
       feedKey: index,
     };
     await prisma.video.upsert({ where: { youtubeVideoId: video.youtubeVideoId }, update: data, create: data });
   }
 });
 
-async function openCategory(page: Page) {
-  await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+async function openTopic(page: Page) {
+  await page.addInitScript(() => window.localStorage.setItem("preferences.v2", JSON.stringify({ version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "skipped" })));
   await page.goto("/");
   await page.getByTestId("feed-tabs").getByRole("button", { name: "اختبار المشغل" }).click();
 }
@@ -59,7 +65,7 @@ test("the feed drives the real player: one active embed, and moving on works", a
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
 
-  await openCategory(page);
+  await openTopic(page);
 
 
   const src = await activeFrame(page).getAttribute("src");
@@ -79,7 +85,7 @@ test("the feed drives the real player: one active embed, and moving on works", a
 });
 
 test("the sound control really changes the real player's state", async ({ page }) => {
-  await openCategory(page);
+  await openTopic(page);
   await expect(activeFrame(page)).toHaveCount(1, { timeout: 30_000 });
   await expect(page.getByTestId("feed-card").first().getByTestId("feed-poster")).toHaveAttribute("data-visible", "false", { timeout: 30_000 });
 
@@ -93,7 +99,7 @@ test("the sound control really changes the real player's state", async ({ page }
 });
 
 test("the first video plays at once, silently, and the first click gives it sound, on the real player", async ({ page }) => {
-  await openCategory(page);
+  await openTopic(page);
   await expect(page.getByTestId("feed-card").first()).toContainText("اختبار المشغل", { timeout: 30_000 });
   const first = page.getByTestId("feed-card").first();
   await expect(first.getByTestId("feed-poster")).toHaveAttribute("data-visible", "false", { timeout: 30_000 });
@@ -118,7 +124,7 @@ test("the video page starts the real player by itself, behind our controls", asy
 });
 
 test("moving on with the real player: a buffered video starts quickly, with nothing left on top", async ({ page }) => {
-  await openCategory(page);
+  await openTopic(page);
   await expect(activeFrame(page)).toHaveCount(1, { timeout: 30_000 });
   const first = page.getByTestId("feed-card").first();
   await expect(first.getByTestId("feed-poster")).toHaveAttribute("data-visible", "false", { timeout: 30_000 });

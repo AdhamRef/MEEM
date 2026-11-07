@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Transparent category scoring (§9.3). There is no model and nothing is inferred about a
+ * Transparent topic scoring (§9.3). There is no model and nothing is inferred about a
  * person: a score is only arithmetic on what they chose and did, and each part is returned
  * so it can be explained.
  *
@@ -18,16 +18,17 @@ export const scoringConfigSchema = z.strictObject({
     repeatedEngagement: z.number().min(0).max(10),
     earlySkip: z.number().min(-10).max(0),
   }),
-  /** Limits how far behaviour can move a category in either direction. */
+  /** Limits how far behaviour can move a topic in either direction. */
   maxBehaviourScore: z.number().positive().max(100),
   decayHalfLifeDays: z.number().positive().max(3650),
-  /** The share of feed slots reserved for categories outside known interests (§9.4). */
+  /** The share of feed slots reserved for topics outside known interests (§9.4). */
   explorationShare: z.number().min(0).max(0.9),
   /** How many other videos must pass before a channel returns, whenever another channel is available. */
   channelSpacing: z.number().int().min(0).max(50).default(6),
-  /** The most of one page a single category can take, so no one topic takes over (§9.3). */
+  /** The most of one page a single topic can take, so no one topic takes over (§9.3). */
+  // Named before topics replaced categories. Stored settings use this key, so it stays.
   maxCategoryShare: z.number().min(0.1).max(1).default(0.75),
-  /** How strongly this visit's completions and skips move a category. Never stored. */
+  /** How strongly this visit's completions and skips move a topic. Never stored. */
   sessionMomentumWeight: z.number().min(0).max(20).default(4),
   /** How much this visit's completions and skips change how often a channel is picked. Never stored. */
   channelMomentumWeight: z.number().min(0).max(5).default(0.5),
@@ -70,45 +71,45 @@ export function applySignal(state: BehaviourState, signal: RecommendationSignal,
   return { behaviourScore: Math.min(limit, Math.max(-limit, next)), lastSignalAt: now };
 }
 
-export interface CategoryInterest extends BehaviourState {
-  categoryId: string;
+export interface TopicInterest extends BehaviourState {
+  topicId: string;
   /** 1 when chosen by the person, 0 otherwise. The weight it multiplies stays configurable. */
   explicitWeight: number;
 }
 
-export interface CategoryScore {
-  categoryId: string;
+export interface TopicScore {
+  topicId: string;
   score: number;
   interestPart: number;
   behaviourPart: number;
 }
 
-export function scoreCategory(interest: CategoryInterest, now: Date, config: ScoringConfig): CategoryScore {
+export function scoreTopic(interest: TopicInterest, now: Date, config: ScoringConfig): TopicScore {
   const interestPart = interest.explicitWeight * config.selectedInterestWeight;
   const behaviourPart = decayedBehaviourScore(interest, now, config);
-  return { categoryId: interest.categoryId, score: interestPart + behaviourPart, interestPart, behaviourPart };
+  return { topicId: interest.topicId, score: interestPart + behaviourPart, interestPart, behaviourPart };
 }
 
 /**
- * Orders every active category, highest score first. Categories with no history score 0.
- * Ties keep the editorial display order given in categoryIds, so results are repeatable.
+ * Orders every active topic, highest score first. Topics with no history score 0.
+ * Ties keep the editorial display order given in topicIds, so results are repeatable.
  */
-export function rankCategories(categoryIds: string[], interests: CategoryInterest[], now: Date, config: ScoringConfig): CategoryScore[] {
-  const byCategory = new Map(interests.map((interest) => [interest.categoryId, interest]));
+export function rankTopics(topicIds: string[], interests: TopicInterest[], now: Date, config: ScoringConfig): TopicScore[] {
+  const byTopic = new Map(interests.map((interest) => [interest.topicId, interest]));
 
-  return categoryIds
-    .map((categoryId, displayIndex) => {
-      const interest = byCategory.get(categoryId) ?? { categoryId, explicitWeight: 0, behaviourScore: 0, lastSignalAt: null };
-      return { displayIndex, score: scoreCategory(interest, now, config) };
+  return topicIds
+    .map((topicId, displayIndex) => {
+      const interest = byTopic.get(topicId) ?? { topicId, explicitWeight: 0, behaviourScore: 0, lastSignalAt: null };
+      return { displayIndex, score: scoreTopic(interest, now, config) };
     })
     .sort((a, b) => b.score.score - a.score.score || a.displayIndex - b.displayIndex)
     .map(({ score }) => score);
 }
 
-/** Adds this visit's momentum to each score and orders them again. Unknown categories are ignored. */
-export function applySessionMomentum(ranked: CategoryScore[], momentum: Record<string, number>, config: ScoringConfig): CategoryScore[] {
+/** Adds this visit's momentum to each score and orders them again. Unknown topics are ignored. */
+export function applySessionMomentum(ranked: TopicScore[], momentum: Record<string, number>, config: ScoringConfig): TopicScore[] {
   return ranked
-    .map((item, order) => ({ order, item: { ...item, score: item.score + (momentum[item.categoryId] ?? 0) * config.sessionMomentumWeight } }))
+    .map((item, order) => ({ order, item: { ...item, score: item.score + (momentum[item.topicId] ?? 0) * config.sessionMomentumWeight } }))
     .sort((a, b) => b.item.score - a.item.score || a.order - b.order)
     .map(({ item }) => item);
 }

@@ -47,12 +47,14 @@ beforeEach(async () => {
 
 describe("deleting your own account", () => {
   async function seedPersonalData(actor: Actor) {
-    const category = await prisma.category.create({ data: { title: "الفقه", slug: `category-${next()}` } });
+    const topic = await prisma.topic.create({ data: { title: "الفقه", slug: `topic-${next()}`, status: "PUBLISHED" } });
+    const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: `UC${next()}`, title: "قناة" } });
     const video = await seedVideo();
     await prisma.account.create({ data: { userId: actor.id, type: "oauth", provider: "google", providerAccountId: `g${next()}` } });
     await prisma.session.create({ data: { userId: actor.id, sessionToken: `token-${next()}`, expires: new Date(Date.now() + 86_400_000) } });
     await prisma.userPreference.create({ data: { userId: actor.id } });
-    await prisma.userInterest.create({ data: { userId: actor.id, categoryId: category.id, isSelected: true } });
+    await prisma.userInterest.create({ data: { userId: actor.id, topicId: topic.id, isSelected: true } });
+    await prisma.userChannelChoice.create({ data: { userId: actor.id, channelId: channel.id, isEnabled: false } });
     await prisma.favorite.create({ data: { userId: actor.id, entityType: "VIDEO", entityId: video.id } });
     await prisma.userActivity.create({ data: { userId: actor.id, entityType: "VIDEO", entityId: video.id, action: "VIEW" } });
     await prisma.viewingProgress.create({ data: { userId: actor.id, videoId: video.id, scopeKey: "video", positionSeconds: 5 } });
@@ -74,6 +76,7 @@ describe("deleting your own account", () => {
       prisma.session.count(where),
       prisma.userPreference.count(where),
       prisma.userInterest.count(where),
+      prisma.userChannelChoice.count(where),
       prisma.favorite.count(where),
       prisma.userActivity.count(where),
       prisma.viewingProgress.count(where),
@@ -178,8 +181,8 @@ describe("query plans", () => {
   }
 
   beforeEach(async () => {
-    const category = await prisma.category.create({ data: { title: "الفقه", slug: `category-${next()}` } });
-    for (let index = 0; index < 20; index += 1) await seedVideo({ categoryId: category.id, searchText: "صلاه", titleSearch: "صلاه" });
+    const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: `UC${next()}`, title: "قناة" } });
+    for (let index = 0; index < 20; index += 1) await seedVideo({ channelId: channel.id, searchText: "صلاه", titleSearch: "صلاه" });
   }, 60_000);
 
   it.each([

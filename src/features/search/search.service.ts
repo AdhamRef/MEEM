@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { strings } from "@/config/strings.ar";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { publicContentFilter } from "@/features/content/common";
 import { resolveInOrder, type ContentRef, type ResolvedContent } from "@/features/content/resolve";
 import { publicPlaylistFilter } from "@/features/playlists/playlist-filters";
@@ -14,8 +14,8 @@ import { mergeRanked, parseSearchTerms, titleMatchesQuery, type SearchTerms } fr
 export const SEARCH_TYPES = ["TOPIC", "SHORT", "LONG_VIDEO", "ARTICLE", "PLAYLIST", "LIBRARY", "RESOURCE"] as const;
 export type SearchType = (typeof SEARCH_TYPES)[number];
 
-/** Types that have a category. The others have nothing a category filter could apply to. */
-export const CATEGORIZED_TYPES: readonly SearchType[] = ["TOPIC", "SHORT", "LONG_VIDEO", "ARTICLE"];
+/** Types a topic filter can narrow. A topic doesn't belong to another topic. */
+export const TOPIC_FILTERED_TYPES: readonly SearchType[] = ["SHORT", "LONG_VIDEO", "ARTICLE", "PLAYLIST", "LIBRARY", "RESOURCE"];
 
 const OVERVIEW_LIMIT = 6;
 const PAGE_SIZE = 12;
@@ -23,6 +23,8 @@ const PAGE_SIZE = 12;
 const MAX_PAGES = 25;
 const MAX_LINKED_RESULTS = 200;
 const MAX_MATCHING_TOPICS = 30;
+/** Bounds a topic filter's list of IDs, which goes into a text query. */
+const MAX_TOPIC_SCOPE = 1000;
 const SUGGESTIONS_PER_TYPE = 3;
 const MAX_SUGGESTIONS = 8;
 
@@ -39,13 +41,13 @@ const entityTypeOf: Record<SearchType, ContentRef["entityType"]> = {
 const searchInputSchema = z.object({
   query: z.string().trim().max(120).catch(""),
   type: z.enum(SEARCH_TYPES).optional().catch(undefined),
-  categoryId: objectIdSchema.optional().catch(undefined),
+  topicId: objectIdSchema.optional().catch(undefined),
   page: z.coerce.number().int().min(1).max(MAX_PAGES).catch(1),
 });
 
 interface TypeSearchOptions {
   terms: SearchTerms;
-  categoryId?: string;
+  scope: TopicScope | null;
   limit: number;
 }
 
@@ -56,19 +58,51 @@ interface TypeSearchOptions {
 const rawPublicFilter = { status: publicContentFilter.status, isArchived: publicContentFilter.isArchived };
 const rawVideoFilter = { status: publicVideoFilter.status, isArchived: publicVideoFilter.isArchived, availability: publicVideoFilter.availability };
 
-function rawFilterFor(type: SearchType, categoryId: string | undefined): Prisma.InputJsonObject {
-  const category = categoryId ? { categoryId: { $oid: categoryId } } : {};
+/** What a topic filter allows, as IDs per kind of content, read once per search. */
+interface TopicScope {
+  channelIds: string[];
+  articleIds: string[];
+  playlistIds: string[];
+  libraryIds: string[];
+  resourceIds: string[];
+}
+
+async function loadTopicScope(topicId: string): Promise<TopicScope> {
+  const take = MAX_TOPIC_SCOPE;
+  const where = { topicId };
+  const [channels, articles, playlists, libraries, resources] = await Promise.all([
+    prisma.channelTopic.findMany({ where, take, select: { channelId: true } }),
+    prisma.articleTopic.findMany({ where, take, select: { articleId: true } }),
+    prisma.playlistTopic.findMany({ where, take, select: { playlistId: true } }),
+    prisma.libraryTopic.findMany({ where, take, select: { libraryId: true } }),
+    prisma.resourceTopic.findMany({ where, take, select: { resourceId: true } }),
+  ]);
+  return {
+    channelIds: channels.map((row) => row.channelId),
+    articleIds: articles.map((row) => row.articleId),
+    playlistIds: playlists.map((row) => row.playlistId),
+    libraryIds: libraries.map((row) => row.libraryId),
+    resourceIds: resources.map((row) => row.resourceId),
+  };
+}
+
+const rawIds = (ids: string[]) => ({ $in: ids.map((id) => ({ $oid: id })) });
+
+function rawFilterFor(type: SearchType, scope: TopicScope | null): Prisma.InputJsonObject {
   switch (type) {
     case "SHORT":
-      return { ...rawVideoFilter, kind: "SHORT", ...category };
+      return { ...rawVideoFilter, kind: "SHORT", ...(scope ? { channelId: rawIds(scope.channelIds) } : {}) };
     case "LONG_VIDEO":
-      return { ...rawVideoFilter, kind: "LONG_FORM", ...category };
+      return { ...rawVideoFilter, kind: "LONG_FORM", ...(scope ? { channelId: rawIds(scope.channelIds) } : {}) };
     case "PLAYLIST":
-      return { ...rawPublicFilter, title: { $ne: "" } };
-    case "TOPIC":
+      return { ...rawPublicFilter, title: { $ne: "" }, ...(scope ? { _id: rawIds(scope.playlistIds) } : {}) };
     case "ARTICLE":
-      return { ...rawPublicFilter, ...category };
-    default:
+      return { ...rawPublicFilter, ...(scope ? { _id: rawIds(scope.articleIds) } : {}) };
+    case "LIBRARY":
+      return { ...rawPublicFilter, ...(scope ? { _id: rawIds(scope.libraryIds) } : {}) };
+    case "RESOURCE":
+      return { ...rawPublicFilter, ...(scope ? { _id: rawIds(scope.resourceIds) } : {}) };
+    case "TOPIC":
       return rawPublicFilter;
   }
 }
@@ -93,9 +127,9 @@ function aggregate(type: SearchType, pipeline: Prisma.InputJsonValue[]) {
 }
 
 /** Best matches first. The ID breaks ties, so a page always continues where the last one ended. */
-async function directMatches(type: SearchType, { terms, categoryId, limit }: TypeSearchOptions): Promise<string[]> {
+async function directMatches(type: SearchType, { terms, scope, limit }: TypeSearchOptions): Promise<string[]> {
   const rows = (await aggregate(type, [
-    { $match: { $text: { $search: terms.textQuery }, ...rawFilterFor(type, categoryId) } },
+    { $match: { $text: { $search: terms.textQuery }, ...rawFilterFor(type, scope) } },
     { $sort: { score: { $meta: "textScore" }, _id: 1 } },
     { $limit: limit },
     { $project: { _id: 1 } },
@@ -103,74 +137,55 @@ async function directMatches(type: SearchType, { terms, categoryId, limit }: Typ
   return rows.map((row) => row._id.$oid);
 }
 
-interface MatchedTaxonomy {
+interface MatchedTopics {
   topicIds: string[];
-  categoryIds: string[];
+  channelIds: string[];
 }
 
-/** Topics and categories named by the query. Their content counts, even if it doesn't repeat the name. */
-async function findMatchedTaxonomy(terms: SearchTerms): Promise<MatchedTaxonomy> {
-  const [topics, categories] = await Promise.all([
-    prisma.topic.aggregateRaw({
-      pipeline: [
-        { $match: { $text: { $search: terms.textQuery }, ...rawPublicFilter } },
-        { $sort: { score: { $meta: "textScore" }, _id: 1 } },
-        { $limit: MAX_MATCHING_TOPICS },
-        { $project: { _id: 1, titleSearch: 1 } },
-      ],
-    }) as unknown as Promise<{ _id: { $oid: string }; titleSearch: string }[]>,
-    prisma.category.findMany({ where: { isActive: true }, select: { id: true, title: true } }),
-  ]);
+/** Topics named by the query. Their content counts, even if it doesn't repeat the name. */
+async function findMatchedTopics(terms: SearchTerms): Promise<MatchedTopics> {
+  const topics = (await prisma.topic.aggregateRaw({
+    pipeline: [
+      { $match: { $text: { $search: terms.textQuery }, ...rawPublicFilter } },
+      { $sort: { score: { $meta: "textScore" }, _id: 1 } },
+      { $limit: MAX_MATCHING_TOPICS },
+      { $project: { _id: 1, titleSearch: 1 } },
+    ],
+  })) as unknown as { _id: { $oid: string }; titleSearch: string }[];
 
-  return {
-    topicIds: topics.filter((topic) => titleMatchesQuery(topic.titleSearch, terms.words)).map((topic) => topic._id.$oid),
-    categoryIds: categories.filter((category) => titleMatchesQuery(normalizeArabicForSearch(category.title), terms.words)).map((category) => category.id),
-  };
+  const topicIds = topics.filter((topic) => titleMatchesQuery(topic.titleSearch, terms.words)).map((topic) => topic._id.$oid);
+  if (topicIds.length === 0) return { topicIds, channelIds: [] };
+  const links = await prisma.channelTopic.findMany({ where: { topicId: { in: topicIds } }, take: MAX_TOPIC_SCOPE, select: { channelId: true } });
+  return { topicIds, channelIds: [...new Set(links.map((link) => link.channelId))] };
 }
 
-async function linkedMatches(type: SearchType, { topicIds, categoryIds }: MatchedTaxonomy, categoryId: string | undefined, limit: number): Promise<string[]> {
-  const hasTopics = topicIds.length > 0;
-  const hasCategories = categoryIds.length > 0;
-  if (!hasTopics && !hasCategories) return [];
+async function linkedMatches(type: SearchType, { topicIds, channelIds }: MatchedTopics, scope: TopicScope | null, limit: number): Promise<string[]> {
+  if (topicIds.length === 0) return [];
 
   const common = { orderBy: { id: "desc" as const }, take: limit, select: { id: true } };
-  const filterCategory = categoryId ? { categoryId } : {};
+  const linked = { some: { topicId: { in: topicIds } } };
   let rows: { id: string }[] = [];
 
   switch (type) {
     case "SHORT":
-    case "LONG_VIDEO":
-      rows = await prisma.video.findMany({
-        ...common,
-        where: {
-          ...publicVideoFilter,
-          ...filterCategory,
-          kind: type === "SHORT" ? "SHORT" : "LONG_FORM",
-          OR: [...(hasTopics ? [{ topicIds: { hasSome: topicIds } }] : []), ...(hasCategories ? [{ categoryId: { in: categoryIds } }] : [])],
-        },
-      });
+    case "LONG_VIDEO": {
+      const allowed = scope ? channelIds.filter((id) => scope.channelIds.includes(id)) : channelIds;
+      if (allowed.length) rows = await prisma.video.findMany({ ...common, where: { ...publicVideoFilter, kind: type === "SHORT" ? "SHORT" : "LONG_FORM", channelId: { in: allowed } } });
       break;
+    }
     case "ARTICLE":
-      rows = await prisma.article.findMany({
-        ...common,
-        where: {
-          ...publicContentFilter,
-          ...filterCategory,
-          OR: [...(hasTopics ? [{ topics: { some: { topicId: { in: topicIds } } } }] : []), ...(hasCategories ? [{ categoryId: { in: categoryIds } }] : [])],
-        },
-      });
+      rows = await prisma.article.findMany({ ...common, where: { ...publicContentFilter, topics: linked, ...(scope ? { id: { in: scope.articleIds } } : {}) } });
       break;
     case "TOPIC":
-      if (hasCategories) rows = await prisma.topic.findMany({ ...common, where: { ...publicContentFilter, AND: [{ categoryId: { in: categoryIds } }, filterCategory] } });
       break;
     case "PLAYLIST":
-      if (hasTopics) rows = await prisma.playlist.findMany({ ...common, where: { ...publicPlaylistFilter, topics: { some: { topicId: { in: topicIds } } } } });
+      rows = await prisma.playlist.findMany({ ...common, where: { ...publicPlaylistFilter, topics: linked, ...(scope ? { id: { in: scope.playlistIds } } : {}) } });
       break;
     case "LIBRARY":
-      if (hasTopics) rows = await prisma.library.findMany({ ...common, where: { ...publicContentFilter, topics: { some: { topicId: { in: topicIds } } } } });
+      rows = await prisma.library.findMany({ ...common, where: { ...publicContentFilter, topics: linked, ...(scope ? { id: { in: scope.libraryIds } } : {}) } });
       break;
     case "RESOURCE":
-      if (hasTopics) rows = await prisma.externalResource.findMany({ ...common, where: { ...publicContentFilter, topics: { some: { topicId: { in: topicIds } } } } });
+      rows = await prisma.externalResource.findMany({ ...common, where: { ...publicContentFilter, topics: linked, ...(scope ? { id: { in: scope.resourceIds } } : {}) } });
       break;
   }
   return rows.map((row) => row.id);
@@ -182,41 +197,41 @@ export interface SearchGroup {
   hasMore: boolean;
 }
 
-async function searchOneType(type: SearchType, terms: SearchTerms, taxonomy: MatchedTaxonomy, categoryId: string | undefined, offset: number, size: number): Promise<SearchGroup> {
+async function searchOneType(type: SearchType, terms: SearchTerms, matched: MatchedTopics, scope: TopicScope | null, offset: number, size: number): Promise<SearchGroup> {
   // One more than needed shows whether another page exists.
   const needed = offset + size + 1;
-  const [direct, linked] = await Promise.all([directMatches(type, { terms, categoryId, limit: needed }), linkedMatches(type, taxonomy, categoryId, Math.min(needed, MAX_LINKED_RESULTS))]);
+  const [direct, linked] = await Promise.all([directMatches(type, { terms, scope, limit: needed }), linkedMatches(type, matched, scope, Math.min(needed, MAX_LINKED_RESULTS))]);
   const ranked = mergeRanked(direct, linked);
   const refs = ranked.slice(offset, offset + size).map((entityId) => ({ entityType: entityTypeOf[type], entityId }));
   return { type, items: await resolveInOrder(refs), hasMore: ranked.length > offset + size };
 }
 
 export type SearchResult =
-  | { status: "EMPTY_QUERY"; query: string; type?: SearchType; categoryId?: string }
-  | { status: "OVERVIEW"; query: string; categoryId?: string; groups: SearchGroup[] }
-  | { status: "TYPE"; query: string; type: SearchType; categoryId?: string; page: number; group: SearchGroup };
+  | { status: "EMPTY_QUERY"; query: string; type?: SearchType; topicId?: string }
+  | { status: "OVERVIEW"; query: string; topicId?: string; groups: SearchGroup[] }
+  | { status: "TYPE"; query: string; type: SearchType; topicId?: string; page: number; group: SearchGroup };
 
 /**
- * Searches stored data only. Titles, descriptions and tags are in the text index. Topic and
- * category names work through the content connected to them (§17). Queries aren't stored.
+ * Searches stored data only. Titles, descriptions and tags are in the text index. Topic names
+ * work through the content connected to them (§17). Queries aren't stored.
  */
 export async function searchContent(rawInput: unknown): Promise<SearchResult> {
   const input = searchInputSchema.parse(rawInput);
-  const { query, type, categoryId, page } = input;
+  const { query, type, topicId, page } = input;
   const terms = parseSearchTerms(query);
-  if (!terms) return { status: "EMPTY_QUERY", query, type, categoryId };
+  if (!terms) return { status: "EMPTY_QUERY", query, type, topicId };
 
-  const taxonomy = await findMatchedTaxonomy(terms);
+  const [matched, scope] = await Promise.all([findMatchedTopics(terms), topicId ? loadTopicScope(topicId) : null]);
 
   if (type) {
-    if (categoryId && !CATEGORIZED_TYPES.includes(type)) return { status: "TYPE", query, type, categoryId, page: 1, group: { type, items: [], hasMore: false } };
-    const group = await searchOneType(type, terms, taxonomy, categoryId, (page - 1) * PAGE_SIZE, PAGE_SIZE);
-    return { status: "TYPE", query, type, categoryId, page, group: { ...group, hasMore: group.hasMore && page < MAX_PAGES } };
+    if (topicId && !TOPIC_FILTERED_TYPES.includes(type)) return { status: "TYPE", query, type, topicId, page: 1, group: { type, items: [], hasMore: false } };
+    const group = await searchOneType(type, terms, matched, scope, (page - 1) * PAGE_SIZE, PAGE_SIZE);
+    return { status: "TYPE", query, type, topicId, page, group: { ...group, hasMore: group.hasMore && page < MAX_PAGES } };
   }
 
-  const types = categoryId ? SEARCH_TYPES.filter((candidate) => CATEGORIZED_TYPES.includes(candidate)) : SEARCH_TYPES;
-  const groups = await Promise.all(types.map((candidate) => searchOneType(candidate, terms, taxonomy, categoryId, 0, OVERVIEW_LIMIT)));
-  return { status: "OVERVIEW", query, categoryId, groups: groups.filter((group) => group.items.length > 0) };
+  const types = topicId ? TOPIC_FILTERED_TYPES : SEARCH_TYPES;
+  const groups = await Promise.all(types.map((candidate) => searchOneType(candidate, terms, matched, scope, 0, OVERVIEW_LIMIT)));
+  return { status: "OVERVIEW", query, topicId, groups: groups.filter((group) => group.items.length > 0) };
 }
 
 export interface SearchSuggestion {

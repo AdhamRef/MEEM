@@ -196,6 +196,7 @@ describe("importing videos", () => {
   });
 
   it("sends at most 50 IDs per request, and asks for statistics only when enabled", async () => {
+    await prisma.applicationSetting.create({ data: { key: YOUTUBE_SETTINGS_KEY, value: { statisticsEnabled: false, refreshAfterDays: 25, maxShortSeconds: 180, refreshBatchesPerRun: 20 } } });
     const ids = Array.from({ length: 120 }, (_, index) => `b${String(index).padStart(10, "0")}`);
     respondWithVideos(ids);
     await importVideosByInput(ids);
@@ -304,14 +305,14 @@ describe("the metadata refresh job", () => {
   });
 
   it("keeps editorial choices while refreshing", async () => {
-    const category = await prisma.category.create({ data: { title: "فقه", slug: "f" } });
+    const library = await prisma.library.create({ data: { name: "فقه", slug: "f" } });
     const video = await storedVideo(ID_1, 26);
-    await prisma.video.update({ where: { id: video.id }, data: { categoryId: category.id, kind: "LONG_FORM" } });
+    await prisma.video.update({ where: { id: video.id }, data: { libraryIds: [library.id], kind: "LONG_FORM" } });
     respondWithVideos([ID_1]);
 
     await runMetadataRefresh(NOW);
 
-    expect(await prisma.video.findUniqueOrThrow({ where: { id: video.id } })).toMatchObject({ categoryId: category.id, kind: "LONG_FORM", status: "PUBLISHED" });
+    expect(await prisma.video.findUniqueOrThrow({ where: { id: video.id } })).toMatchObject({ libraryIds: [library.id], kind: "LONG_FORM", status: "PUBLISHED" });
   });
 
   it("notices deleted videos: it removes YouTube's data and keeps the record", async () => {
@@ -333,6 +334,7 @@ describe("the metadata refresh job", () => {
   });
 
   it("removes stored statistics when they're switched off", async () => {
+    await prisma.applicationSetting.create({ data: { key: YOUTUBE_SETTINGS_KEY, value: { statisticsEnabled: false, refreshAfterDays: 25, maxShortSeconds: 180, refreshBatchesPerRun: 20 } } });
     const video = await storedVideo(ID_1, 26);
     await prisma.video.update({ where: { id: video.id }, data: { stats: { viewCount: 9n, fetchedAt: daysAgo(26) } } });
     respondWithVideos([ID_1], { [ID_1]: { statistics: { viewCount: "10" } } });

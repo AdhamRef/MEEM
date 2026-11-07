@@ -12,7 +12,7 @@ import { SearchBox } from "@/components/search/search-box";
 import { StateMessage } from "@/components/shared/state-message";
 import { EXPLORE_LONG_PAGE, EXPLORE_SHORTS_PAGE } from "@/config/feed";
 import { strings } from "@/config/strings.ar";
-import { listActiveCategories } from "@/features/categories/categories.service";
+import { listBrowsableTopics } from "@/features/topics/catalogue.service";
 import { listExploreCollections } from "@/features/collections/collections.service";
 import { getExploreSections, listExploreVideos, listPopularContent, POPULAR_WINDOW_DAYS } from "@/features/explore/explore.service";
 import { cn } from "@/lib/utils";
@@ -36,15 +36,15 @@ function Chip({ href, isActive, testId, children }: { href: string; isActive: bo
  * asking, so it can't turn into a second For You (§16). The editorial sections the specification
  * asks for are all still here, as shelves between the videos. Empty ones are hidden.
  */
-export default async function ExplorePage({ searchParams }: { searchParams: Promise<{ category?: string | string[] }> }) {
+export default async function ExplorePage({ searchParams }: { searchParams: Promise<{ topic?: string | string[] }> }) {
   await connection();
-  const { category: rawCategory } = await searchParams;
-  const categories = await listActiveCategories();
-  const selected = typeof rawCategory === "string" ? (categories.find((category) => category.slug === rawCategory) ?? null) : null;
+  const { topic: rawTopic } = await searchParams;
+  const topics = await listBrowsableTopics();
+  const selected = typeof rawTopic === "string" ? (topics.find((topic) => topic.slug === rawTopic) ?? null) : null;
 
   const [initialVideos, initialShorts, sections, collections, popular] = await Promise.all([
-    listExploreVideos({ kind: "LONG_FORM", categoryId: selected?.id, size: EXPLORE_LONG_PAGE }),
-    listExploreVideos({ kind: "SHORT", categoryId: selected?.id, size: EXPLORE_SHORTS_PAGE }),
+    listExploreVideos({ kind: "LONG_FORM", topicId: selected?.id, size: EXPLORE_LONG_PAGE }),
+    listExploreVideos({ kind: "SHORT", topicId: selected?.id, size: EXPLORE_SHORTS_PAGE }),
     getExploreSections(),
     listExploreCollections(),
     listPopularContent(),
@@ -56,7 +56,7 @@ export default async function ExplorePage({ searchParams }: { searchParams: Prom
   const hasEditorial = featuredTopics.length + updatedTopics.length + libraries.length + playlists.length + articles.length + collections.length + popular.length > 0 || hasNewContent;
   const now = new Date();
 
-  // A chosen category narrows the videos. The wider shelves belong to the "all" view.
+  // A chosen topic narrows the videos. The wider shelves belong to the "all" view.
   const shelves = selected
     ? []
     : [
@@ -121,7 +121,7 @@ export default async function ExplorePage({ searchParams }: { searchParams: Prom
         </Shelf>,
       ].filter(Boolean);
 
-  const isEmpty = !hasVideos && (selected !== null || (!hasEditorial && categories.length === 0));
+  const isEmpty = !hasVideos && (selected !== null || (!hasEditorial && topics.length === 0));
 
   return (
     <div className="w-full" data-testid="explore-page">
@@ -131,14 +131,14 @@ export default async function ExplorePage({ searchParams }: { searchParams: Prom
         <div className="mx-auto max-w-2xl px-4 pt-3 md:px-6" data-testid="explore-search">
           <SearchBox initialQuery="" isCompact />
         </div>
-        {categories.length ? (
-          <nav aria-label={e.categories} data-testid="section-categories" className="scroll-row flex gap-2 overflow-x-auto px-4 py-3 md:px-6">
+        {topics.length ? (
+          <nav aria-label={e.topics} data-testid="section-topics" className="scroll-row flex gap-2 overflow-x-auto px-4 py-3 md:px-6">
             <Chip href="/explore" isActive={selected === null}>
               {e.all}
             </Chip>
-            {categories.map((category) => (
-              <Chip key={category.id} href={`/explore?category=${encodeURIComponent(category.slug)}`} isActive={selected?.id === category.id} testId="explore-category">
-                {category.title}
+            {topics.map((topic) => (
+              <Chip key={topic.id} href={`/explore?topic=${encodeURIComponent(topic.slug)}`} isActive={selected?.id === topic.id} testId="explore-topic">
+                {topic.title}
               </Chip>
             ))}
           </nav>
@@ -149,10 +149,10 @@ export default async function ExplorePage({ searchParams }: { searchParams: Prom
 
       <div className="px-4 pt-4 pb-10 md:px-6">
         {isEmpty ? (
-          <StateMessage icon={Compass} title={selected ? e.emptyCategoryTitle : e.emptyTitle} description={selected ? e.emptyCategoryDescription : e.emptyDescription} />
+          <StateMessage icon={Compass} title={selected ? e.emptyTopicTitle : e.emptyTitle} description={selected ? e.emptyTopicDescription : e.emptyDescription} />
         ) : (
-          // Keyed, so choosing another category starts its list afresh.
-          <ExploreFeed key={selected?.id ?? "all"} categoryId={selected?.id ?? null} initialVideos={initialVideos} initialShorts={initialShorts} shelves={shelves} />
+          // Keyed, so choosing another topic starts its list afresh.
+          <ExploreFeed key={selected?.id ?? "all"} topicId={selected?.id ?? null} initialVideos={initialVideos} initialShorts={initialShorts} shelves={shelves} />
         )}
       </div>
     </div>

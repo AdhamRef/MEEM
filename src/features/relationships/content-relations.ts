@@ -1,6 +1,6 @@
 import type { ContentRelationType, ContentType } from "@prisma/client";
 import { z } from "zod";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { optionalText } from "@/features/content/common";
 
 /** The §13.2 relationships, and what each one can point at. */

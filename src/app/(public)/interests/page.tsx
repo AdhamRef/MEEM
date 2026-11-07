@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { InterestsManager } from "@/components/preferences/interests-manager";
 import { StateMessage } from "@/components/shared/state-message";
 import { strings } from "@/config/strings.ar";
-import { listActiveCategories } from "@/features/categories/categories.service";
+import { getInterestCatalogue } from "@/features/topics/catalogue.service";
 
 export const metadata: Metadata = {
   title: strings.interests.pageTitle,
@@ -14,19 +14,19 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function InterestsPage() {
-  const categories = await listActiveCategories();
+  const catalogue = await getInterestCatalogue();
 
-  if (categories.length === 0) {
+  if (catalogue.channels.length === 0) {
     return <StateMessage icon={Sparkles} headingLevel="h1" title={strings.interests.emptyTitle} description={strings.interests.emptyDescription} />;
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 px-4 py-8">
+    <div className="mx-auto w-full max-w-6xl space-y-6 px-4 pt-8 md:px-8">
       <header className="space-y-2">
-        <h1 className="text-2xl font-semibold">{strings.interests.pageTitle}</h1>
+        <h1 className="text-3xl font-semibold">{strings.interests.pageTitle}</h1>
         <p className="text-text-secondary">{strings.interests.pageDescription}</p>
       </header>
-      <InterestsManager categories={categories} />
+      <InterestsManager catalogue={catalogue} />
     </div>
   );
 }

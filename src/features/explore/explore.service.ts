@@ -1,6 +1,6 @@
 import type { ContentType } from "@prisma/client";
 import { z } from "zod";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { articleCardSelect, topicCardSelect, type TopicCardData } from "@/features/content/cards";
 import { publicContentFilter } from "@/features/content/common";
 import { resolveInOrder, type ResolvedContent } from "@/features/content/resolve";
@@ -61,7 +61,7 @@ export async function getExploreSections() {
 
 const exploreVideosSchema = z.object({
   kind: z.enum(["SHORT", "LONG_FORM"]),
-  categoryId: objectIdSchema.nullish(),
+  topicId: objectIdSchema.nullish(),
   cursor: z.string().nullish(),
   size: z.number().int().min(1).max(MAX_VIDEOS_PER_REQUEST),
 });
@@ -73,8 +73,8 @@ const exploreVideosSchema = z.object({
 export async function listExploreVideos(rawInput: unknown): Promise<FeedPage> {
   const parsed = exploreVideosSchema.safeParse(rawInput);
   if (!parsed.success) throw new AppError("VALIDATION");
-  const { kind, categoryId, cursor, size } = parsed.data;
-  return getFeedPage(null, { kind, categoryId, cursor }, size);
+  const { kind, topicId, cursor, size } = parsed.data;
+  return getFeedPage(null, { kind, topicId, cursor }, size);
 }
 
 /**
@@ -98,17 +98,17 @@ export async function listPopularContent(now = new Date()): Promise<ResolvedCont
   return items.length >= POPULAR_MIN_ITEMS ? items.slice(0, SECTION_LIMIT) : [];
 }
 
-const categoryIdsSchema = z.array(objectIdSchema).min(1).max(50);
+const topicIdsSchema = z.array(objectIdSchema).min(1).max(50);
 
 /**
- * Topic recommendations (§11.3): topics in the categories someone chose, and nothing inferred.
+ * Topic recommendations (§11.3): the topics someone chose and their sub-topics, and nothing inferred.
  * Guests' choices live in their browser, so the IDs arrive with the request. Nothing is stored.
  */
-export async function listTopicsForInterests(rawCategoryIds: unknown): Promise<TopicCardData[]> {
-  const parsed = categoryIdsSchema.safeParse(rawCategoryIds);
+export async function listTopicsForInterests(rawTopicIds: unknown): Promise<TopicCardData[]> {
+  const parsed = topicIdsSchema.safeParse(rawTopicIds);
   if (!parsed.success) return [];
   return prisma.topic.findMany({
-    where: { ...publicContentFilter, categoryId: { in: parsed.data } },
+    where: { ...publicContentFilter, OR: [{ id: { in: parsed.data } }, { parentId: { in: parsed.data } }] },
     orderBy: [{ displayOrder: "asc" }, { id: "desc" }],
     take: SECTION_LIMIT,
     select: topicCardSelect,

@@ -17,7 +17,7 @@ export interface LinkSectionConfig {
   canManage: boolean;
 }
 
-function LinkSection({ ownerId, config }: { ownerId: string; config: LinkSectionConfig }) {
+export function LinkSection({ ownerId, config }: { ownerId: string; config: LinkSectionConfig }) {
   const { kind, targetType, canManage } = config;
   const [rows, setRows] = useState<LinkRow[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);

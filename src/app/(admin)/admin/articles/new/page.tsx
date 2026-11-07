@@ -2,7 +2,6 @@ import { AdminPageHeader } from "@/components/admin/content/list-frame";
 import { ArticleEditor } from "@/components/articles/editor/article-editor";
 import { StateMessage } from "@/components/shared/state-message";
 import { strings } from "@/config/strings.ar";
-import { listActiveCategories } from "@/features/categories/categories.service";
 import { checkPageAccess } from "@/lib/auth/guards";
 import { EMPTY_DOCUMENT } from "@/lib/content/document";
 import { hasPermission } from "@/lib/permissions";
@@ -16,7 +15,6 @@ export default async function NewArticlePage() {
   if (!access.allowed) return null;
   if (!hasPermission(access.actor, "content.create")) return <StateMessage icon={ShieldX} title={strings.admin.deniedTitle} description={strings.adminContent.noPermission} />;
 
-  const categories = await listActiveCategories();
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-5 px-4 py-8">
@@ -24,7 +22,6 @@ export default async function NewArticlePage() {
       <ArticleEditor
         status="DRAFT"
         canAssign={hasPermission(access.actor, "content.editAny")}
-        categories={categories.map((category) => ({ id: category.id, title: category.title }))}
         onSave={createArticleAction}
         initial={{
           title: "",
@@ -33,7 +30,6 @@ export default async function NewArticlePage() {
           coverImage: null,
           coverCaption: null,
           bylineName: null,
-          categoryId: null,
           seoTitle: null,
           seoDescription: null,
           sources: [],

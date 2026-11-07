@@ -22,8 +22,6 @@ export const videoCardSelect = {
   durationSeconds: true,
   aspectRatio: true,
   ytPublishedAt: true,
-  categoryId: true,
-  topicIds: true,
   cta: true,
   stats: true,
   feedKey: true,
@@ -90,20 +88,23 @@ async function resolveCtas(rows: VideoCardRow[]): Promise<Map<string, VideoCardC
 export async function toVideoCards(rows: VideoCardRow[]): Promise<VideoCard[]> {
   if (rows.length === 0) return [];
 
-  const categoryIds = [...new Set(rows.flatMap((row) => (row.categoryId ? [row.categoryId] : [])))];
-  const topicIds = [...new Set(rows.flatMap((row) => row.topicIds))];
   const channelIds = [...new Set(rows.flatMap((row) => (row.channelId ? [row.channelId] : [])))];
 
-  const [channels, categories, topics, ctas, settings] = await Promise.all([
+  const [channels, topicLinks, ctas, settings] = await Promise.all([
     channelIds.length ? prisma.youTubeChannel.findMany({ where: { id: { in: channelIds } }, select: { id: true, thumbnailUrl: true } }) : [],
-    prisma.category.findMany({ where: { id: { in: categoryIds } }, select: { id: true, title: true, slug: true } }),
-    topicIds.length ? prisma.topic.findMany({ where: { id: { in: topicIds }, status: "PUBLISHED", isArchived: false }, select: { id: true, title: true } }) : [],
+    channelIds.length
+      ? prisma.channelTopic.findMany({
+          where: { channelId: { in: channelIds }, topic: { status: "PUBLISHED", isArchived: false } },
+          select: { channelId: true, topic: { select: { id: true, title: true, slug: true, displayOrder: true } } },
+          orderBy: { id: "asc" },
+        })
+      : [],
     resolveCtas(rows),
     getYouTubeSettings(),
   ]);
   const channelImageById = new Map(channels.map((channel) => [channel.id, channel.thumbnailUrl]));
-  const categoryById = new Map(categories.map((category) => [category.id, category]));
-  const topicTitleById = new Map(topics.map((topic) => [topic.id, topic.title]));
+  const topicsByChannel = new Map<string, { id: string; title: string; slug: string; displayOrder: number }[]>();
+  for (const { channelId, topic } of topicLinks) topicsByChannel.set(channelId, [...(topicsByChannel.get(channelId) ?? []), topic]);
 
   return rows.map((row) => ({
     id: row.id,
@@ -118,11 +119,7 @@ export async function toVideoCards(rows: VideoCardRow[]): Promise<VideoCard[]> {
     durationSeconds: row.durationSeconds,
     aspectRatio: row.aspectRatio,
     uploadedAt: row.ytPublishedAt?.toISOString() ?? null,
-    category: row.categoryId ? (categoryById.get(row.categoryId) ?? null) : null,
-    topics: row.topicIds.flatMap((id) => {
-      const title = topicTitleById.get(id);
-      return title ? [title] : [];
-    }),
+    topics: [...((row.channelId && topicsByChannel.get(row.channelId)) || [])].sort((a, b) => a.displayOrder - b.displayOrder).map(({ id, title, slug }) => ({ id, title, slug })),
     cta: ctas.get(row.id) ?? null,
     viewCount: settings.statisticsEnabled && row.stats?.viewCount != null ? Number(row.stats.viewCount) : null,
     likeCount: settings.statisticsEnabled && row.stats?.likeCount != null ? Number(row.stats.likeCount) : null,

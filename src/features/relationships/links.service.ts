@@ -1,24 +1,25 @@
 import type { Prisma, TopicRelationType } from "@prisma/client";
 import { z } from "zod";
+import { strings } from "@/config/strings.ar";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { AppError, isUniqueConstraintError } from "@/lib/errors";
 import { assertPermission, hasPermission, type Actor, type Permission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { withTransaction } from "@/lib/prisma/transaction";
 import { canonicalPair } from "./content-relations";
-import { videoPickerLabel, type PickerItem, type PickerType } from "./picker.service";
+import { channelPickerLabel, videoPickerLabel, type PickerItem, type PickerType } from "./picker.service";
 import { pullFromVideoArray } from "./references";
 
 /**
  * Links are added and removed one at a time, rather than saved as a whole list with the form.
- * A topic can hold thousands of videos, which a form can't carry, and two editors working on
- * the same topic can't overwrite each other this way. Video.topicIds and libraryIds are copies
- * for fast feed filtering, and this file is the only place that changes them with the joins.
+ * A library can hold thousands of videos, which a form can't carry, and two editors working on
+ * the same item can't overwrite each other this way. Video.libraryIds is a copy for fast
+ * filtering, and this file is the only place that changes it with the join.
  */
 
 export const LINK_KINDS = [
-  "topic.video",
+  "topic.channel",
   "topic.article",
   "topic.playlist",
   "topic.resource",
@@ -34,7 +35,7 @@ export const LINK_KINDS = [
   "playlist.topic",
   "playlist.library",
   "playlist.article",
-  "video.topic",
+  "channel.topic",
   "video.library",
   "video.article",
 ] as const;
@@ -66,6 +67,7 @@ const page = { take: LIST_PAGE_SIZE + 1, orderBy: { id: "desc" as const } };
 const draftFlag = (status: string) => status === "DRAFT";
 
 const topicExists = async (tx: Tx, id: string) => (await tx.topic.count({ where: { id } })) > 0;
+const channelExists = async (tx: Tx, id: string) => (await tx.youTubeChannel.count({ where: { id } })) > 0;
 const libraryExists = async (tx: Tx, id: string) => (await tx.library.count({ where: { id } })) > 0;
 const videoExists = async (tx: Tx, id: string) => (await tx.video.count({ where: { id } })) > 0;
 const articleExists = async (tx: Tx, id: string) => (await tx.article.count({ where: { id } })) > 0;
@@ -103,7 +105,7 @@ function topicRelationHandler(type: TopicRelationType): LinkHandler {
 }
 
 /** The same link as from the other side, so the join and its feed copy stay together in one place. */
-function fromVideo(kind: "topic.video" | "library.video", targetExists: LinkHandler["targetExists"], targetType: PickerType, list: LinkHandler["list"]): () => LinkHandler {
+function fromVideo(kind: "library.video", targetExists: LinkHandler["targetExists"], targetType: PickerType, list: LinkHandler["list"]): () => LinkHandler {
   return () => ({
     permission: "content.editAny",
     targetType,
@@ -115,19 +117,23 @@ function fromVideo(kind: "topic.video" | "library.video", targetExists: LinkHand
   });
 }
 
-const videoTopicHandler = fromVideo("topic.video", topicExists, "TOPIC", async (videoId, cursor) => {
-  const rows = await prisma.videoTopic.findMany({ ...page, ...cursorOf(cursor), where: { videoId }, select: { id: true, topic: { select: { id: true, title: true, status: true } } } });
-  return rows.map(({ id, topic }) => ({ linkId: id, id: topic.id, type: "TOPIC", label: topic.title, isDraft: draftFlag(topic.status) }));
-});
-
 const videoLibraryHandler = fromVideo("library.video", libraryExists, "LIBRARY", async (videoId, cursor) => {
   const rows = await prisma.videoLibrary.findMany({ ...page, ...cursorOf(cursor), where: { videoId }, select: { id: true, library: { select: { id: true, name: true, status: true } } } });
   return rows.map(({ id, library }) => ({ linkId: id, id: library.id, type: "LIBRARY", label: library.name, isDraft: draftFlag(library.status) }));
 });
 
 const HANDLERS: Record<LinkKind, LinkHandler> = {
-  get "video.topic"() {
-    return videoTopicHandler();
+  "channel.topic": {
+    permission: "topics.manage",
+    targetType: "TOPIC",
+    ownerExists: channelExists,
+    targetExists: topicExists,
+    add: async (tx, channelId, topicId) => void (await tx.channelTopic.create({ data: { channelId, topicId } })),
+    remove: async (tx, channelId, topicId) => void (await tx.channelTopic.deleteMany({ where: { channelId, topicId } })),
+    list: async (channelId, cursor) => {
+      const rows = await prisma.channelTopic.findMany({ ...page, ...cursorOf(cursor), where: { channelId }, select: { id: true, topic: { select: { id: true, title: true, status: true } } } });
+      return rows.map(({ id, topic }) => ({ linkId: id, id: topic.id, type: "TOPIC", label: topic.title, isDraft: draftFlag(topic.status) }));
+    },
   },
   get "video.library"() {
     return videoLibraryHandler();
@@ -144,22 +150,16 @@ const HANDLERS: Record<LinkKind, LinkHandler> = {
       return rows.map(({ id, article }) => ({ linkId: id, id: article.id, type: "ARTICLE", label: article.title, isDraft: draftFlag(article.status) }));
     },
   },
-  "topic.video": {
+  "topic.channel": {
     permission: "topics.manage",
-    targetType: "VIDEO",
+    targetType: "CHANNEL",
     ownerExists: topicExists,
-    targetExists: videoExists,
-    add: async (tx, topicId, videoId) => {
-      await tx.videoTopic.create({ data: { videoId, topicId } });
-      await tx.video.update({ where: { id: videoId }, data: { topicIds: { push: topicId } } });
-    },
-    remove: async (tx, topicId, videoId) => {
-      await tx.videoTopic.deleteMany({ where: { videoId, topicId } });
-      await pullFromVideoArray(tx, "topicIds", topicId, [videoId]);
-    },
+    targetExists: channelExists,
+    add: async (tx, topicId, channelId) => void (await tx.channelTopic.create({ data: { channelId, topicId } })),
+    remove: async (tx, topicId, channelId) => void (await tx.channelTopic.deleteMany({ where: { channelId, topicId } })),
     list: async (topicId, cursor) => {
-      const rows = await prisma.videoTopic.findMany({ ...page, ...cursorOf(cursor), where: { topicId }, select: { id: true, video: { select: { id: true, title: true, kind: true, channelTitle: true, status: true } } } });
-      return rows.map(({ id, video }) => ({ linkId: id, id: video.id, type: "VIDEO", label: video.title, hint: videoPickerLabel(video), isDraft: draftFlag(video.status) }));
+      const rows = await prisma.channelTopic.findMany({ ...page, ...cursorOf(cursor), where: { topicId }, select: { id: true, channel: { select: { id: true, title: true, handle: true } } } });
+      return rows.map(({ id, channel }) => ({ linkId: id, id: channel.id, type: "CHANNEL", label: channel.title || strings.importer.channelWithdrawn, hint: channelPickerLabel(channel) }));
     },
   },
   "topic.article": {
@@ -352,7 +352,7 @@ export function canManageLink(actor: Actor, kind: LinkKind): boolean {
   return hasPermission(actor, HANDLERS[kind].permission);
 }
 
-const auditEntity = (kind: LinkKind) => (kind.startsWith("topic.") ? "Topic" : kind.startsWith("library.") ? "Library" : kind.startsWith("video.") ? "Video" : "Playlist");
+const auditEntity = (kind: LinkKind) => (kind.startsWith("topic.") ? "Topic" : kind.startsWith("library.") ? "Library" : kind.startsWith("video.") ? "Video" : kind.startsWith("channel.") ? "YouTubeChannel" : "Playlist");
 
 /** Adding something already linked is treated as done. */
 export async function addLink(actor: Actor | null, rawInput: unknown): Promise<void> {

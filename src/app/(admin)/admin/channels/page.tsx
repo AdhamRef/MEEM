@@ -2,6 +2,7 @@
 import { ShieldX, Tv } from "lucide-react";
 import Link from "next/link";
 import { ChannelActions } from "@/components/admin/importer/channel-actions";
+import { ChannelTopics } from "@/components/admin/importer/channel-topics";
 import { StateMessage } from "@/components/shared/state-message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,7 +49,7 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
         <ul className="space-y-2" data-testid="channel-list">
           {channels.items.map((channel) => (
             <li key={channel.id} className="flex flex-wrap items-center gap-3 rounded-xl border bg-surface p-3" data-testid="channel-row">
-              {channel.thumbnailUrl ? <img src={channel.thumbnailUrl} alt="" loading="lazy" referrerPolicy="strict-origin-when-cross-origin" className="size-12 rounded-full" /> : null}
+              {channel.thumbnailUrl ? <img src={channel.thumbnailUrl} alt="" loading="lazy" referrerPolicy="no-referrer" className="size-12 rounded-full" /> : null}
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-2 font-medium">
                   <bdi className="truncate">{channel.title || t.channelWithdrawn}</bdi>
@@ -60,6 +61,7 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
                 </p>
               </div>
               <ChannelActions channelId={channel.id} isActive={channel.isActive} canSync={isConfigured && Boolean(channel.title)} />
+              <ChannelTopics channelId={channel.id} topicTitles={channel.topics.map((link) => link.topic.title)} canManage={hasPermission(access.actor, "topics.manage")} />
             </li>
           ))}
         </ul>

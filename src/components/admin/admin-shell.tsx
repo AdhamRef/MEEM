@@ -19,7 +19,6 @@ export function AdminShell({ actor, children }: { actor: Actor; children: ReactN
     ...(can("youtube.import") ? (["importer", "channels"] as const) : []),
     "articles",
     ...(can("topics.manage") ? (["topics"] as const) : []),
-    ...(can("categories.manage") ? (["categories"] as const) : []),
     ...(can("libraries.manage") ? (["libraries"] as const) : []),
     ...(can("playlists.manage") || can("youtube.import") ? (["playlists"] as const) : []),
     ...(can("relationships.manage") ? (["resources"] as const) : []),

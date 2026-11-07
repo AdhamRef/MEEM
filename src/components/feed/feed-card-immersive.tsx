@@ -118,7 +118,7 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col gap-1.5 bg-linear-to-t from-black/75 to-transparent ps-3 pe-16 pt-16 pb-3 md:pe-3" data-testid="feed-caption">
           <div className="flex min-w-0 items-center gap-2">
             {video.channelImageUrl ? (
-              <img src={video.channelImageUrl} alt="" loading="lazy" referrerPolicy="strict-origin-when-cross-origin" className="size-9 shrink-0 rounded-full border border-white/30 object-cover" />
+              <img src={video.channelImageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" className="size-9 shrink-0 rounded-full border border-white/30 object-cover" />
             ) : (
               <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/15">
                 <Tv className="size-4" strokeWidth={1.5} />
@@ -131,7 +131,7 @@ export const ImmersiveFeedCard = forwardRef<HTMLElement, FeedCardProps>(function
           <h2 dir="auto" className="line-clamp-2 text-start text-sm leading-snug drop-shadow-sm">
             {video.title}
           </h2>
-          {video.category ? <p className="text-xs text-white/85">{video.category.title}</p> : null}
+          {video.topics[0] ? <p className="text-xs text-white/85">{video.topics[0].title}</p> : null}
           {video.viewCount !== null ? (
             <p className="text-xs text-white/85" data-testid="view-count">
               <bdi>{video.viewCount.toLocaleString("ar")}</bdi> {strings.feed.views}

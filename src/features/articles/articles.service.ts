@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { strings } from "@/config/strings.ar";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { articleCardSelect, resourceCardSelect, topicCardSelect, type ArticleCardData, type ResourceCardData, type TopicCardData } from "@/features/content/cards";
 import {
   conflictOnDuplicate,
@@ -50,7 +50,6 @@ export const articleInputSchema = z.strictObject({
   coverCaption: optionalText(300),
   body: z.unknown(),
   bylineName: optionalText(120),
-  categoryId: objectIdSchema.nullable().optional(),
   sources: z.array(sourceSchema).max(100).default([]),
   seoTitle: optionalText(120),
   seoDescription: optionalText(300),
@@ -76,7 +75,6 @@ async function assertAllExist(tx: Prisma.TransactionClient, input: ArticleInput)
     [input.libraryIds, (ids) => tx.library.count({ where: { id: { in: ids } } })],
     [input.videoIds, (ids) => tx.video.count({ where: { id: { in: ids } } })],
     [input.playlistIds, (ids) => tx.playlist.count({ where: { id: { in: ids } } })],
-    [input.categoryId ? [input.categoryId] : [], (ids) => tx.category.count({ where: { id: { in: ids } } })],
     [input.relations.filter((r) => r.targetType === "ARTICLE").map((r) => r.targetId), (ids) => tx.article.count({ where: { id: { in: ids } } })],
     [input.relations.filter((r) => r.targetType === "TOPIC").map((r) => r.targetId), (ids) => tx.topic.count({ where: { id: { in: ids } } })],
     [input.relations.filter((r) => r.targetType === "RESOURCE").map((r) => r.targetId), (ids) => tx.externalResource.count({ where: { id: { in: ids } } })],
@@ -103,7 +101,6 @@ function buildContentFields(input: ArticleInput) {
     sources: input.sources.map((source) => ({ title: source.title, author: source.author ?? null, url: source.url ?? null, note: source.note ?? null })),
     seo: input.seoTitle || input.seoDescription ? { title: input.seoTitle ?? null, description: input.seoDescription ?? null, imageUrl: null } : null,
     bylineName: input.bylineName ?? null,
-    categoryId: input.categoryId ?? null,
     readingMinutes: computeReadingMinutes(plainText),
     titleSearch: normalizeArabicForSearch(input.title),
     searchText: buildSearchText([input.title, input.excerpt, plainText]),
@@ -335,7 +332,6 @@ export async function getArticleForEditing(actor: Actor | null, rawId: unknown) 
     coverCaption: article.coverCaption,
     body: article.body,
     bylineName: article.bylineName,
-    categoryId: article.categoryId,
     sources: article.sources,
     seoTitle: article.seo?.title ?? null,
     seoDescription: article.seo?.description ?? null,
@@ -381,7 +377,6 @@ export async function getPublishedArticleBySlug(rawSlug: string) {
       readingMinutes: true,
       publishedAt: true,
       updatedAt: true,
-      category: { select: { title: true } },
     },
   });
 }

@@ -3,7 +3,7 @@ import type { ImportJobStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { strings } from "@/config/strings.ar";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { idListSchema, parseId, parseOptionalCursor, toCursorPage } from "@/features/content/common";
 import { AppError, isUniqueConstraintError } from "@/lib/errors";
 import { assertPermission, type Actor } from "@/lib/permissions";
@@ -284,7 +284,7 @@ export async function listCandidates(actor: Actor | null, rawInput: unknown) {
       isSelected: true,
       result: true,
       resultMessage: true,
-      assignment: { select: { kind: true, categoryId: true } },
+      assignment: { select: { kind: true } },
     },
   });
   const [matching, selected] = await Promise.all([prisma.importCandidate.count({ where: candidateWhere(jobId, filter) }), prisma.importCandidate.count({ where: { jobId, isSelected: true } })]);
@@ -325,8 +325,6 @@ export async function setCandidatesSelected(actor: Actor | null, rawInput: unkno
 const assignSchema = z.strictObject({
   jobId: objectIdSchema,
   kind: z.enum(["SHORT", "LONG_FORM"]).nullable().optional(),
-  categoryId: objectIdSchema.nullable().optional(),
-  topicIds: idListSchema,
   libraryIds: idListSchema,
   playlistIds: idListSchema,
 });
@@ -336,18 +334,16 @@ export async function assignSelectedCandidates(actor: Actor | null, rawInput: un
   assertPermission(actor, "youtube.import");
   const parsed = assignSchema.safeParse(rawInput);
   if (!parsed.success) throw new AppError("VALIDATION");
-  const { jobId, kind, categoryId, topicIds, libraryIds, playlistIds } = parsed.data;
+  const { jobId, kind, libraryIds, playlistIds } = parsed.data;
   await loadReviewableJob(jobId);
 
-  if (categoryId && !(await prisma.category.count({ where: { id: categoryId } }))) throw new AppError("VALIDATION");
-  if ((await prisma.topic.count({ where: { id: { in: topicIds } } })) !== new Set(topicIds).size) throw new AppError("VALIDATION");
   if ((await prisma.library.count({ where: { id: { in: libraryIds } } })) !== new Set(libraryIds).size) throw new AppError("VALIDATION");
   // Only curated playlists take items, because YouTube's come from YouTube.
   if ((await prisma.playlist.count({ where: { id: { in: playlistIds }, type: "CURATED" } })) !== new Set(playlistIds).size) throw new AppError("VALIDATION");
 
   const { count } = await prisma.importCandidate.updateMany({
     where: { jobId, isSelected: true },
-    data: { assignment: { set: { kind: kind ?? null, categoryId: categoryId ?? null, topicIds, libraryIds, playlistIds } } },
+    data: { assignment: { set: { kind: kind ?? null, libraryIds, playlistIds } } },
   });
   return { changed: count };
 }
@@ -355,7 +351,6 @@ export async function assignSelectedCandidates(actor: Actor | null, rawInput: un
 async function importCandidate(candidate: Prisma.ImportCandidateGetPayload<object>, job: { channelId: string; createdById: string | null }): Promise<"IMPORTED" | "DUPLICATE"> {
   const assignment = candidate.assignment;
   const kind = assignment?.kind ?? (candidate.classification === "SHORT_CANDIDATE" ? "SHORT" : "LONG_FORM");
-  const topicIds = [...new Set(assignment?.topicIds ?? [])];
   const libraryIds = [...new Set(assignment?.libraryIds ?? [])];
 
   try {
@@ -369,7 +364,6 @@ async function importCandidate(candidate: Prisma.ImportCandidateGetPayload<objec
           reviewedAt: assignment?.kind ? new Date() : null,
           status: "DRAFT",
           channelId: job.channelId,
-          categoryId: assignment?.categoryId ?? null,
           title: candidate.title,
           description: candidate.description,
           channelTitle: candidate.channelTitle,
@@ -382,7 +376,6 @@ async function importCandidate(candidate: Prisma.ImportCandidateGetPayload<objec
           availability: "AVAILABLE",
           // When YouTube's data was fetched, not now, so the 30-day clock stays honest.
           metadataFetchedAt: candidate.createdAt,
-          topicIds,
           libraryIds,
           feedKey: randomInt(MAX_FEED_KEY),
           titleSearch: normalizeArabicForSearch(candidate.title),
@@ -390,7 +383,6 @@ async function importCandidate(candidate: Prisma.ImportCandidateGetPayload<objec
           createdById: job.createdById,
         },
       });
-      if (topicIds.length) await tx.videoTopic.createMany({ data: topicIds.map((topicId) => ({ videoId: video.id, topicId })) });
       if (libraryIds.length) await tx.videoLibrary.createMany({ data: libraryIds.map((libraryId) => ({ videoId: video.id, libraryId })) });
       for (const playlistId of new Set(assignment?.playlistIds ?? [])) {
         const last = await tx.playlistItem.findFirst({ where: { playlistId }, orderBy: { position: "desc" }, select: { position: true } });

@@ -1,19 +1,19 @@
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { getDashboardOverview, getIntegrationStatus, getSettingsForEditing, listAuditLogs, listUsers, updateYouTubeSettings } from "@/features/admin/system.service";
-import { createCategory, listAllCategories, listActiveCategories, setCategoryActive, updateCategory } from "@/features/categories/categories.service";
 import { addLink, listLinks, removeLink } from "@/features/relationships/links.service";
 import { updateScoringConfig } from "@/features/recommendations/settings.service";
 import { DEFAULT_SCORING_CONFIG } from "@/features/recommendations/scoring";
 import { listArticlesForAdmin, listMatchingArticleIds } from "@/features/articles/articles.service";
 import { bulkAssignArticles, bulkAssignVideos, bulkPublishVideos, getVideoForEditing, listMatchingVideoIds, listVideosForAdmin, setVideoArchived } from "@/features/shorts/videos-admin.service";
 import { assignVideo } from "@/features/shorts/videos.service";
+import { createTopic } from "@/features/topics/topics.service";
 import { changeUserRole, setUserDeactivated, setUserPermissionGrants } from "@/features/users/user-admin.service";
 import { getYouTubeSettings } from "@/features/youtube/settings.service";
 import { AppError } from "@/lib/errors";
 import type { Actor } from "@/lib/permissions";
 import { clearDatabase, createTestClient } from "./helpers";
-import { createActor } from "./phase3-helpers";
+import { createActor, createChannel } from "./phase3-helpers";
 
 process.env.APP_URL = "http://localhost:3000";
 
@@ -39,7 +39,6 @@ async function video(overrides: Record<string, unknown> = {}) {
   });
 }
 const topic = () => prisma.topic.create({ data: { title: `موضوع ${++counter}`, slug: `t-${counter}`, status: "PUBLISHED" } });
-const category = () => prisma.category.create({ data: { title: `مجال ${++counter}`, slug: `c-${counter}` } });
 const article = () => prisma.article.create({ data: { title: `مقال ${++counter}`, slug: `a-${counter}`, body: {} } });
 
 beforeAll(() => {
@@ -75,8 +74,8 @@ describe("the overview", () => {
   });
 
   it("shows recent activity only to those who may read the audit log", async () => {
-    await createCategory(admin, { title: "مجال النشاط" });
-    expect((await getDashboardOverview(admin)).recentActivity?.[0]?.action).toBe("category.create");
+    await createTopic(admin, { title: "موضوع النشاط" });
+    expect((await getDashboardOverview(admin)).recentActivity?.[0]?.action).toBe("topic.create");
     expect((await getDashboardOverview(editor)).recentActivity).toBeNull();
     expect(await codeOf(getDashboardOverview(await createActor(prisma, "USER")))).toBe("FORBIDDEN");
   });
@@ -84,8 +83,7 @@ describe("the overview", () => {
 
 describe("managing videos", () => {
   it("lists and filters, for those who may view everything", async () => {
-    const cat = await category();
-    const reviewed = await video({ reviewedAt: new Date(), categoryId: cat.id });
+    const reviewed = await video({ reviewedAt: new Date() });
     const waiting = await video();
     const long = await video({ kind: "LONG_FORM", reviewedAt: new Date(), status: "PUBLISHED" });
     const archived = await video({ isArchived: true });
@@ -95,7 +93,6 @@ describe("managing videos", () => {
     expect(await list({ kind: "LONG_FORM" })).toEqual([long.id]);
     expect(await list({ review: "NEEDS_REVIEW" })).toEqual([waiting.id]);
     expect(await list({ review: "REVIEWED" })).toEqual([reviewed.id, long.id].sort());
-    expect(await list({ categoryId: cat.id })).toEqual([reviewed.id]);
     expect(await list({ status: "PUBLISHED" })).toEqual([long.id]);
     expect(await list({ status: "ARCHIVED" })).toEqual([archived.id]);
     expect(await codeOf(listVideosForAdmin(await createActor(prisma, "CONTRIBUTOR"), {}))).toBe("FORBIDDEN");
@@ -107,51 +104,42 @@ describe("managing videos", () => {
     expect((await listVideosForAdmin(editor, { review: "NEEDS_REVIEW" })).items.map((row) => row.id)).toContain(missing.id);
   });
 
-  it("assigns a kind, category, and topics in bulk, keeping existing topics, and audits it", async () => {
+  it("assigns a kind in bulk, counting it as the review, and audits it", async () => {
     const [a, b] = [await video(), await video()];
-    const cat = await category();
-    const [first, second] = [await topic(), await topic()];
-    await addLink(editor, { kind: "video.topic", ownerId: a.id, targetId: first.id });
 
-    const { changed } = await bulkAssignVideos(editor, { ids: [a.id, b.id], kind: "SHORT", categoryId: cat.id, addTopicIds: [first.id, second.id] });
+    const { changed } = await bulkAssignVideos(editor, { ids: [a.id, b.id], kind: "LONG_FORM" });
     expect(changed).toBe(2);
 
-    const stored = await prisma.video.findUniqueOrThrow({ where: { id: a.id } });
-    expect(stored.categoryId).toBe(cat.id);
-    expect(stored.reviewedAt).not.toBeNull();
-    expect([...stored.topicIds].sort()).toEqual([first.id, second.id].sort());
-    expect(await prisma.videoTopic.count({ where: { videoId: a.id } })).toBe(2);
-    expect(await prisma.videoTopic.count({ where: { videoId: b.id } })).toBe(2);
+    for (const id of [a.id, b.id]) {
+      const stored = await prisma.video.findUniqueOrThrow({ where: { id } });
+      expect(stored.kind).toBe("LONG_FORM");
+      expect(stored.reviewedAt).not.toBeNull();
+    }
     expect(await prisma.auditLog.count({ where: { action: "video.bulk_assign" } })).toBe(1);
   });
 
-  it("doesn't mark videos reviewed when only assigning a category", async () => {
-    const clip = await video();
-    await bulkAssignVideos(editor, { ids: [clip.id], categoryId: (await category()).id });
-    expect((await prisma.video.findUniqueOrThrow({ where: { id: clip.id } })).reviewedAt).toBeNull();
-  });
-
-  it("rejects an empty bulk action, too many items, and things that don't exist, changing nothing", async () => {
+  it("rejects an empty bulk action, too many items, topics, and things that don't exist, changing nothing", async () => {
     const clip = await video();
     const missing = "507f1f77bcf86cd799439011";
     expect(await codeOf(bulkAssignVideos(editor, { ids: [clip.id] }))).toBe("VALIDATION");
-    expect(await codeOf(bulkAssignVideos(editor, { ids: [], categoryId: (await category()).id }))).toBe("VALIDATION");
-    expect(await codeOf(bulkAssignVideos(editor, { ids: Array(101).fill(clip.id), kind: "SHORT" }))).toBe("VALIDATION");
-    expect(await codeOf(bulkAssignVideos(editor, { ids: [clip.id], categoryId: missing }))).toBe("VALIDATION");
+    expect(await codeOf(bulkAssignVideos(editor, { ids: [], kind: "LONG_FORM" }))).toBe("VALIDATION");
+    expect(await codeOf(bulkAssignVideos(editor, { ids: Array(101).fill(clip.id), kind: "LONG_FORM" }))).toBe("VALIDATION");
+    // A video's topics are its channel's, so a bulk action can't assign any.
+    expect(await codeOf(bulkAssignVideos(editor, { ids: [clip.id], kind: "LONG_FORM", addTopicIds: [(await topic()).id] }))).toBe("VALIDATION");
     expect(await codeOf(bulkAssignVideos(editor, { ids: [clip.id, missing], kind: "LONG_FORM" }))).toBe("VALIDATION");
     expect((await prisma.video.findUniqueOrThrow({ where: { id: clip.id } })).kind).toBe("SHORT");
   });
 
-  it("publishes in bulk whatever can play, with or without a category or earlier review", async () => {
-    const cat = await category();
-    const ready = await video({ reviewedAt: new Date(), categoryId: cat.id });
-    const notReviewed = await video({ categoryId: cat.id });
-    const noCategory = await video({ reviewedAt: new Date() });
-    const unavailable = await video({ reviewedAt: new Date(), categoryId: cat.id, availability: "UNAVAILABLE" });
+  it("publishes in bulk whatever can play, with or without a channel or earlier review", async () => {
+    const channel = await createChannel(prisma, [(await topic()).id]);
+    const ready = await video({ reviewedAt: new Date(), channelId: channel.id });
+    const notReviewed = await video({ channelId: channel.id });
+    const noChannel = await video({ reviewedAt: new Date() });
+    const unavailable = await video({ reviewedAt: new Date(), channelId: channel.id, availability: "UNAVAILABLE" });
 
-    const report = await bulkPublishVideos(admin, { ids: [ready.id, notReviewed.id, noCategory.id, unavailable.id], isPublished: true });
+    const report = await bulkPublishVideos(admin, { ids: [ready.id, notReviewed.id, noChannel.id, unavailable.id], isPublished: true });
     expect(report).toEqual({ changed: 3, skipped: 1 });
-    for (const row of [ready, notReviewed, noCategory]) expect((await prisma.video.findUniqueOrThrow({ where: { id: row.id } })).status).toBe("PUBLISHED");
+    for (const row of [ready, notReviewed, noChannel]) expect((await prisma.video.findUniqueOrThrow({ where: { id: row.id } })).status).toBe("PUBLISHED");
     expect((await prisma.video.findUniqueOrThrow({ where: { id: unavailable.id } })).status).toBe("DRAFT");
     expect(await codeOf(bulkPublishVideos(editor, { ids: [ready.id], isPublished: false }))).toBe("FORBIDDEN");
   });
@@ -160,22 +148,28 @@ describe("managing videos", () => {
     const clip = await video();
     const art = await article();
     const contributor = await createActor(prisma, "CONTRIBUTOR");
-    const cat = await category();
-    expect(await codeOf(bulkAssignVideos(contributor, { ids: [clip.id], categoryId: cat.id }))).toBe("FORBIDDEN");
-    expect(await codeOf(bulkAssignArticles(contributor, { ids: [art.id], categoryId: cat.id }))).toBe("FORBIDDEN");
-    expect(await codeOf(bulkAssignVideos(null, { ids: [clip.id], categoryId: cat.id }))).toBe("UNAUTHENTICATED");
+    const t = await topic();
+    expect(await codeOf(bulkAssignVideos(contributor, { ids: [clip.id], kind: "LONG_FORM" }))).toBe("FORBIDDEN");
+    expect(await codeOf(bulkAssignArticles(contributor, { ids: [art.id], addTopicIds: [t.id] }))).toBe("FORBIDDEN");
+    expect(await codeOf(bulkAssignVideos(null, { ids: [clip.id], kind: "LONG_FORM" }))).toBe("UNAUTHENTICATED");
   });
 
   it("assigns articles in bulk without repeats", async () => {
     const [a, b] = [await article(), await article()];
-    const cat = await category();
     const t = await topic();
     await prisma.articleTopic.create({ data: { articleId: a.id, topicId: t.id } });
 
-    await bulkAssignArticles(editor, { ids: [a.id, b.id], categoryId: cat.id, addTopicIds: [t.id] });
-    expect((await prisma.article.findUniqueOrThrow({ where: { id: b.id } })).categoryId).toBe(cat.id);
+    await bulkAssignArticles(editor, { ids: [a.id, b.id], addTopicIds: [t.id] });
+    expect(await prisma.articleTopic.count({ where: { articleId: b.id, topicId: t.id } })).toBe(1);
     expect(await prisma.articleTopic.count({ where: { topicId: t.id } })).toBe(2);
     expect(await prisma.auditLog.count({ where: { action: "article.bulk_assign" } })).toBe(1);
+  });
+
+  it("rejects a bulk article action with no topics, or one that doesn't exist", async () => {
+    const art = await article();
+    expect(await codeOf(bulkAssignArticles(editor, { ids: [art.id], addTopicIds: [] }))).toBe("VALIDATION");
+    expect(await codeOf(bulkAssignArticles(editor, { ids: [art.id], addTopicIds: ["507f1f77bcf86cd799439011"] }))).toBe("VALIDATION");
+    expect(await prisma.articleTopic.count()).toBe(0);
   });
 
   it("archives, keeping links, and needs the permission", async () => {
@@ -187,22 +181,26 @@ describe("managing videos", () => {
 
   it("links from the video's side, keeping the feed copy in step", async () => {
     const clip = await video();
-    const t = await topic();
     const lib = await prisma.library.create({ data: { name: "م", slug: `l-${++counter}` } });
     const art = await article();
 
-    await addLink(editor, { kind: "video.topic", ownerId: clip.id, targetId: t.id });
     await addLink(editor, { kind: "video.library", ownerId: clip.id, targetId: lib.id });
     await addLink(editor, { kind: "video.article", ownerId: clip.id, targetId: art.id });
     let stored = await prisma.video.findUniqueOrThrow({ where: { id: clip.id } });
-    expect(stored.topicIds).toEqual([t.id]);
     expect(stored.libraryIds).toEqual([lib.id]);
     expect((await listLinks(editor, { kind: "video.article", ownerId: clip.id })).items.map((row) => row.id)).toEqual([art.id]);
 
-    await removeLink(editor, { kind: "video.topic", ownerId: clip.id, targetId: t.id });
+    await removeLink(editor, { kind: "video.library", ownerId: clip.id, targetId: lib.id });
     stored = await prisma.video.findUniqueOrThrow({ where: { id: clip.id } });
-    expect(stored.topicIds).toEqual([]);
-    expect(await codeOf(addLink(await createActor(prisma, "CONTRIBUTOR"), { kind: "video.topic", ownerId: clip.id, targetId: t.id }))).toBe("FORBIDDEN");
+    expect(stored.libraryIds).toEqual([]);
+    expect(await codeOf(addLink(await createActor(prisma, "CONTRIBUTOR"), { kind: "video.library", ownerId: clip.id, targetId: lib.id }))).toBe("FORBIDDEN");
+  });
+
+  it("no longer links a video to a topic directly, since its topics are its channel's", async () => {
+    const clip = await video();
+    const t = await topic();
+    expect(await codeOf(addLink(editor, { kind: "video.topic", ownerId: clip.id, targetId: t.id }))).toBe("VALIDATION");
+    expect(await codeOf(addLink(editor, { kind: "topic.video", ownerId: t.id, targetId: clip.id }))).toBe("VALIDATION");
   });
 
   it("shows a CTA's target by name", async () => {
@@ -210,19 +208,6 @@ describe("managing videos", () => {
     const clip = await video();
     await assignVideo(editor, clip.id, { cta: { type: "INTERNAL_ARTICLE", targetId: art.id, label: "اقرأ" } });
     expect((await getVideoForEditing(editor, clip.id)).ctaTarget).toEqual({ id: art.id, type: "ARTICLE", label: art.title });
-  });
-});
-
-describe("categories", () => {
-  it("are managed only by those allowed, and listed with inactive ones", async () => {
-    expect(await codeOf(createCategory(editor, { title: "س" }))).toBe("FORBIDDEN");
-    const created = await createCategory(admin, { title: "مجال جديد" });
-    await updateCategory(admin, created.id, { displayOrder: 5, description: "وصف" });
-    await setCategoryActive(admin, created.id, false);
-
-    expect((await listActiveCategories()).map((row) => row.id)).not.toContain(created.id);
-    expect((await listAllCategories(admin)).find((row) => row.id === created.id)).toMatchObject({ isActive: false, displayOrder: 5, description: "وصف" });
-    expect(await codeOf(listAllCategories(editor))).toBe("FORBIDDEN");
   });
 });
 
@@ -266,13 +251,13 @@ describe("users and roles", () => {
 
 describe("the audit log", () => {
   it("is readable only with permission, filterable, and newest first", async () => {
-    await createCategory(admin, { title: "أول" });
-    await createCategory(superAdmin, { title: "ثان" });
+    await createTopic(admin, { title: "أول" });
+    await createTopic(superAdmin, { title: "ثان" });
     await changeUserRole(superAdmin, (await createActor(prisma, "USER")).id, "EDITOR");
 
     expect(await codeOf(listAuditLogs(editor, {}))).toBe("FORBIDDEN");
     expect((await listAuditLogs(admin, {})).items[0]!.action).toBe("user.role_change");
-    expect((await listAuditLogs(admin, { action: "category." })).items).toHaveLength(2);
+    expect((await listAuditLogs(admin, { action: "topic." })).items).toHaveLength(2);
     expect((await listAuditLogs(admin, { actor: admin.email })).items.map((row) => row.actorEmail)).toEqual([admin.email]);
   });
 

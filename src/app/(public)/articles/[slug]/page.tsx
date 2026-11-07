@@ -9,7 +9,6 @@ import { ViewRecorder } from "@/components/knowledge/view-recorder";
 import { ReadingProgress } from "@/components/articles/reading-progress";
 import { ArticleCard, cardGridClass, ContentSection, PlaylistCard, ResourceCard, ShortsStrip, slugHref, TopicCard, VideoTile } from "@/components/knowledge/content-cards";
 import { JsonLd } from "@/components/shared/json-ld";
-import { Badge } from "@/components/ui/badge";
 import { articleJsonLd } from "@/lib/seo";
 import { strings } from "@/config/strings.ar";
 import { getArticleConnections, getPublishedArticleBySlug } from "@/features/articles/articles.service";
@@ -66,7 +65,6 @@ export default async function ArticlePage({ params }: PageProps) {
         <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_16rem] lg:gap-10">
           <div id="article-reading-area" className="min-w-0">
             <header className="space-y-4">
-              {article.category ? <Badge variant="secondary">{article.category.title}</Badge> : null}
               <h1 dir="auto" className="text-start text-3xl leading-tight font-semibold text-balance md:text-4xl">
                 {article.title}
               </h1>

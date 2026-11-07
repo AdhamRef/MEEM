@@ -30,7 +30,7 @@ export function parseSearchTerms(rawQuery: string): SearchTerms | null {
 const coreWord = (word: string) => wordForms(word).at(-1) as string;
 
 /**
- * Whether a topic or category is what the person typed, rather than one that happens to
+ * Whether a topic is what the person typed, rather than one that happens to
  * mention a word in its description. Only then does its content count as a result (§17).
  */
 export function titleMatchesQuery(normalizedTitle: string, words: string[]): boolean {

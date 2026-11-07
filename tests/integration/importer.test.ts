@@ -301,8 +301,11 @@ describe("the preview", () => {
   it("rejects assignments to things that don't exist, or to YouTube's playlists", async () => {
     const jobId = await prepared({ videoIds: ids(1) });
     const missing = "507f1f77bcf86cd799439011";
-    expect(await codeOf(assignSelectedCandidates(admin, { jobId, categoryId: missing }))).toBe("VALIDATION");
-    expect(await codeOf(assignSelectedCandidates(admin, { jobId, topicIds: [missing] }))).toBe("VALIDATION");
+    expect(await codeOf(assignSelectedCandidates(admin, { jobId, libraryIds: [missing] }))).toBe("VALIDATION");
+    expect(await codeOf(assignSelectedCandidates(admin, { jobId, playlistIds: [missing] }))).toBe("VALIDATION");
+    // A video's topics are its channel's, so an import can't assign any.
+    const topic = await prisma.topic.create({ data: { title: "موضوع", slug: "t", status: "PUBLISHED" } });
+    expect(await codeOf(assignSelectedCandidates(admin, { jobId, topicIds: [topic.id] }))).toBe("VALIDATION");
     const youtubePlaylist = await prisma.playlist.create({ data: { type: "YOUTUBE", title: "س", slug: "s", sourceKey: "yt:s" } });
     expect(await codeOf(assignSelectedCandidates(admin, { jobId, playlistIds: [youtubePlaylist.id] }))).toBe("VALIDATION");
   });
@@ -312,8 +315,6 @@ describe("importing", () => {
   it("imports only what's selected, as drafts, with assignments, and reports the outcome", async () => {
     const videoIds = ids(3);
     const [a, b, c] = videoIds;
-    const category = await prisma.category.create({ data: { title: "الفقه", slug: "fiqh" } });
-    const topic = await prisma.topic.create({ data: { title: "موضوع", slug: "t", status: "PUBLISHED" } });
     const library = await prisma.library.create({ data: { name: "مكتبة", slug: "l", status: "PUBLISHED" } });
     const playlist = await prisma.playlist.create({ data: { type: "CURATED", title: "سلسلة", slug: "p", sourceKey: "cur:p" } });
     const jobId = await prepared({ videoIds, longIds: [c!] });
@@ -321,7 +322,7 @@ describe("importing", () => {
     const rows = await allCandidates(jobId);
     const idOf = (youtubeId: string) => rows.find((row) => row.youtubeVideoId === youtubeId)!.id;
     await setCandidatesSelected(admin, { jobId, isSelected: true, candidateIds: [idOf(a!), idOf(c!)] });
-    await assignSelectedCandidates(admin, { jobId, categoryId: category.id, topicIds: [topic.id], libraryIds: [library.id], playlistIds: [playlist.id] });
+    await assignSelectedCandidates(admin, { jobId, libraryIds: [library.id], playlistIds: [playlist.id] });
     fetchMock.mockClear();
 
     const done = await importAll(jobId);
@@ -331,19 +332,32 @@ describe("importing", () => {
 
     expect(await prisma.video.count({ where: { youtubeVideoId: b! } })).toBe(0);
     const video = await prisma.video.findUniqueOrThrow({ where: { youtubeVideoId: a! } });
-    expect(video).toMatchObject({ status: "DRAFT", kind: "SHORT", classification: "SHORT_CANDIDATE", categoryId: category.id, availability: "AVAILABLE", topicIds: [topic.id], libraryIds: [library.id], reviewedAt: null });
-    expect(await prisma.videoTopic.count({ where: { videoId: video.id, topicId: topic.id } })).toBe(1);
+    expect(video).toMatchObject({ status: "DRAFT", kind: "SHORT", classification: "SHORT_CANDIDATE", availability: "AVAILABLE", libraryIds: [library.id], reviewedAt: null });
     expect(await prisma.videoLibrary.count({ where: { videoId: video.id, libraryId: library.id } })).toBe(1);
     expect(await prisma.playlistItem.count({ where: { playlistId: playlist.id } })).toBe(2);
     expect((await prisma.playlist.findUniqueOrThrow({ where: { id: playlist.id } })).itemCount).toBe(2);
     expect((await prisma.video.findUniqueOrThrow({ where: { youtubeVideoId: c! } })).kind).toBe("LONG_FORM");
   });
 
+  it("gives imported videos the topics of their channel, with nothing to assign one by one", async () => {
+    const jobId = await prepared({ videoIds: ids(1) });
+    await setCandidatesSelected(admin, { jobId, isSelected: true, filter: {} });
+    await importAll(jobId);
+
+    const video = await prisma.video.findFirstOrThrow();
+    const { channelId } = await prisma.importJob.findUniqueOrThrow({ where: { id: jobId } });
+    expect(video.channelId).toBe(channelId);
+
+    const topic = await prisma.topic.create({ data: { title: "موضوع", slug: "t", status: "PUBLISHED" } });
+    await prisma.channelTopic.create({ data: { channelId, topicId: topic.id } });
+    await prisma.video.update({ where: { id: video.id }, data: { status: "PUBLISHED" } });
+    expect((await getPublicVideo(video.id))?.topics).toEqual([{ id: topic.id, title: "موضوع", slug: "t" }]);
+  });
+
   it("never publishes automatically, so imports reach neither the feed nor public pages", async () => {
-    const category = await prisma.category.create({ data: { title: "الفقه", slug: "fiqh" } });
     const jobId = await prepared({ videoIds: ids(2) });
     await setCandidatesSelected(admin, { jobId, isSelected: true, filter: {} });
-    await assignSelectedCandidates(admin, { jobId, kind: "SHORT", categoryId: category.id });
+    await assignSelectedCandidates(admin, { jobId, kind: "SHORT" });
     await importAll(jobId);
 
     expect(await prisma.video.count({ where: { status: "PUBLISHED" } })).toBe(0);

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { AppError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { fetchCommentPage, type YouTubeComment } from "@/lib/youtube/comments";

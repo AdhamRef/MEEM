@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { createAccount, prisma, signInBrowser } from "./support/accounts";
-import { SEEDED_SHORTS_PER_CATEGORY } from "./support/seed-feed";
+import { SEEDED_SHORTS_PER_TOPIC, seededChannelTitle, SKIPPED_FIRST_VISIT } from "./support/seed-feed";
 import { FEED_CROP_PIXELS } from "../../src/config/feed";
 import { expect, test } from "./support/test";
 
 /** Opens the feed past the first-visit prompt, as someone who already skipped it. */
 async function openFeed(page: Page, path = "/") {
-  await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+  await page.addInitScript(() => window.localStorage.setItem("preferences.v2", JSON.stringify({ version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "skipped" })));
   await page.goto(path);
   await expect(activeFrame(page)).toHaveCount(1, { timeout: 15_000 });
 }
@@ -196,7 +196,7 @@ test.describe("playback rules", () => {
 
   test("a refused unmute falls back to muted playback, says so, and doesn't stop the video", async ({ page }) => {
     await withDefaultSound(page);
-    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+    await page.addInitScript(() => window.localStorage.setItem("preferences.v2", JSON.stringify({ version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "skipped" })));
     // The browser reports past activity while the player still refuses, as can happen on phones.
     await page.addInitScript(() => Object.defineProperty(navigator, "userActivation", { value: { hasBeenActive: true }, configurable: true }));
     await page.goto("/");
@@ -330,7 +330,7 @@ test.describe("playback rules", () => {
   test("moving before the player is ready doesn't crash, and ends on the right video", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+    await page.addInitScript(() => window.localStorage.setItem("preferences.v2", JSON.stringify({ version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "skipped" })));
 
     await page.goto("/");
     await page.getByTestId("feed-card").first().waitFor();
@@ -409,7 +409,7 @@ test.describe("playback rules", () => {
   test("explains when YouTube's player can't load at all", async ({ page, context }) => {
     await context.unroute("https://www.youtube.com/iframe_api");
     await context.route("https://www.youtube.com/iframe_api", (route) => route.abort());
-    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+    await page.addInitScript(() => window.localStorage.setItem("preferences.v2", JSON.stringify({ version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "skipped" })));
 
     await page.goto("/");
     await expect(page.getByText("تعذّر تحميل مشغل YouTube")).toBeVisible({ timeout: 15_000 });
@@ -443,7 +443,7 @@ test.describe("the feed content", () => {
     for (const card of await page.getByTestId("feed-card").all()) {
       const attribution = card.getByTestId("youtube-attribution");
       await expect(attribution).toContainText("المصدر: YouTube");
-      await expect(attribution).toContainText("قناة الاختبار");
+      await expect(attribution).toContainText("قناة ");
       await expect(attribution.locator('a[href^="https://www.youtube.com/watch?v="]')).toHaveCount(1);
       // Statistics are off, so no count may appear.
       await expect(card.getByTestId("view-count")).toHaveCount(0);
@@ -458,7 +458,7 @@ test.describe("the feed content", () => {
     });
     await openFeed(page);
 
-    const expected = await prisma.video.count({ where: { status: "PUBLISHED", isArchived: false, availability: "AVAILABLE", kind: "SHORT", category: { isActive: true } } });
+    const expected = await prisma.video.count({ where: { status: "PUBLISHED", isArchived: false, availability: "AVAILABLE", kind: "SHORT" } });
     const cards = page.getByTestId("feed-card");
     for (let step = 0; step < 60; step += 1) {
       if ((await cards.count()) > expected) break;
@@ -473,7 +473,7 @@ test.describe("the feed content", () => {
 
     const ids = await cards.evaluateAll((elements) => elements.map((element) => (element as HTMLElement).dataset.videoId!));
     expect(new Set(ids.slice(0, expected)).size).toBe(expected);
-    expect(expected).toBeGreaterThanOrEqual(SEEDED_SHORTS_PER_CATEGORY * 4);
+    expect(expected).toBeGreaterThanOrEqual(SEEDED_SHORTS_PER_TOPIC * 4);
 
     const titles = (await cards.locator("h2").allTextContents()).join(" ");
     expect(titles).not.toContain("مخفي");
@@ -482,7 +482,7 @@ test.describe("the feed content", () => {
     expect(requests).toEqual([]);
   });
 
-  test("the tabs switch to one category, and back", async ({ page }) => {
+  test("the tabs switch to one topic, and back", async ({ page }) => {
     await openFeed(page);
 
     await page.getByTestId("feed-tabs").getByRole("button", { name: "النبوة", exact: true }).click();
@@ -499,7 +499,8 @@ test.describe("the feed content", () => {
   });
 
   test("the first tab stays reachable when there are more tabs than fit", async ({ page }) => {
-    const created = await Promise.all(Array.from({ length: 30 }, (_, index) => prisma.category.create({ data: { title: `مجال طويل الاسم للتجربة ${index} ${randomUUID().slice(0, 4)}`, slug: `many-tabs-${randomUUID()}` } })));
+    const channel = await prisma.youTubeChannel.findFirstOrThrow({ where: { title: seededChannelTitle("الفقه") } });
+    const created = await Promise.all(Array.from({ length: 30 }, (_, index) => prisma.topic.create({ data: { title: `موضوع طويل الاسم للتجربة ${index} ${randomUUID().slice(0, 4)}`, slug: `many-tabs-${randomUUID()}`, status: "PUBLISHED", channels: { create: { channelId: channel.id } } } })));
     try {
       await openFeed(page);
       const forYou = page.getByTestId("feed-tabs").getByRole("button", { name: "لك", exact: true });
@@ -507,21 +508,35 @@ test.describe("the feed content", () => {
       await forYou.click();
       await expect(forYou).toHaveAttribute("aria-pressed", "true");
     } finally {
-      await prisma.category.deleteMany({ where: { id: { in: created.map((category) => category.id) } } });
+      const ids = created.map((topic) => topic.id);
+      await prisma.channelTopic.deleteMany({ where: { topicId: { in: ids } } });
+      await prisma.topic.deleteMany({ where: { id: { in: ids } } });
     }
   });
 
-  test("a category with nothing in it says so", async ({ page }) => {
-    await openFeed(page);
-    await page.getByTestId("feed-tabs").getByRole("button", { name: "الآداب الإسلامية" }).click();
-    await expect(page.getByText("لا توجد مقاطع منشورة في هذا المجال بعد.")).toBeVisible();
-    // Nothing active, and no player left sitting over the message.
-    await expect(activeFrame(page)).toHaveCount(0);
-    await expect(page.locator('[data-testid="player-mount"]:visible')).toHaveCount(0);
+  test("a topic with no Shorts says so", async ({ page }) => {
+    const suffix = randomUUID();
+    const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: `UC${suffix}`, title: `قناة طويلة ${suffix}`, metadataFetchedAt: new Date() } });
+    const topic = await prisma.topic.create({ data: { title: `موضوع بلا قصيرة ${suffix.slice(0, 4)}`, slug: `no-shorts-${suffix}`, status: "PUBLISHED", channels: { create: { channelId: channel.id } } } });
+    const video = await prisma.video.create({ data: { youtubeVideoId: `l${suffix.slice(0, 10)}`, kind: "LONG_FORM", classification: "LONG_FORM_CANDIDATE", status: "PUBLISHED", availability: "AVAILABLE", title: "محاضرة فقط", channelId: channel.id, feedKey: 1, metadataFetchedAt: new Date() } });
+    try {
+      await openFeed(page);
+      await page.getByTestId("feed-tabs").getByRole("button", { name: topic.title }).click();
+      await expect(page.getByText("لا توجد مقاطع منشورة في هذا الموضوع بعد.")).toBeVisible();
+      // Nothing active, and no player left sitting over the message.
+      await expect(activeFrame(page)).toHaveCount(0);
+      await expect(page.locator('[data-testid="player-mount"]:visible')).toHaveCount(0);
+    } finally {
+      await prisma.video.delete({ where: { id: video.id } });
+      await prisma.channelTopic.deleteMany({ where: { topicId: topic.id } });
+      await prisma.topic.delete({ where: { id: topic.id } });
+      await prisma.youTubeChannel.delete({ where: { id: channel.id } });
+    }
   });
 
   test("shows an honest empty state with no videos", async ({ page }) => {
     await page.route("**/api/feed*", (route) => route.fulfill({ json: { items: [], nextCursor: null } }));
+    await page.addInitScript((value) => window.localStorage.setItem("preferences.v2", value), SKIPPED_FIRST_VISIT);
     await page.goto("/");
     await expect(page.getByText("لا توجد مقاطع بعد")).toBeVisible();
     await expect(page.locator("iframe")).toHaveCount(0);
@@ -530,7 +545,7 @@ test.describe("the feed content", () => {
   test("recovers from a failed load", async ({ page }) => {
     let shouldFail = true;
     await page.route("**/api/feed*", (route) => (shouldFail ? route.fulfill({ status: 500, json: {} }) : route.continue()));
-    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+    await page.addInitScript(() => window.localStorage.setItem("preferences.v2", JSON.stringify({ version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "skipped" })));
 
     await page.goto("/");
     await expect(page.getByText("تعذّر تحميل المقاطع")).toBeVisible();
@@ -540,28 +555,26 @@ test.describe("the feed content", () => {
     await expect(page.getByTestId("feed-card").first()).toBeVisible();
   });
 
-  test("the first-visit prompt is one slide, and scrolling past it starts the feed", async ({ page }) => {
+  test("no player exists until the first-visit choices close", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByTestId("onboarding")).toBeVisible();
+    await expect(page.getByTestId("first-run")).toBeVisible();
     await expect(page.locator("iframe")).toHaveCount(0);
 
-    await page.getByTestId("feed-scroller").evaluate((element) => {
-      element.scrollTop = element.clientHeight;
-    });
+    await page.getByTestId("first-run-skip").click();
     await expect(activeFrame(page)).toHaveCount(1);
   });
 
   test("a guest's interests shape the feed they see", async ({ page }) => {
-    const category = await prisma.category.findUniqueOrThrow({ where: { slug: "النبوة" } });
-    await page.addInitScript((id) => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [id], onboarding: "completed" })), category.id);
+    const topic = await prisma.topic.findUniqueOrThrow({ where: { slug: "النبوة" } });
+    await page.addInitScript((id) => window.localStorage.setItem("preferences.v2", JSON.stringify({ version: 2, selectedTopicIds: [id], channelChoices: {}, onboarding: "completed" })), topic.id);
 
     const feedRequest = page.waitForRequest((request) => request.url().includes("/api/feed"));
     await page.goto("/");
-    expect(new URL((await feedRequest).url()).searchParams.get("interests")).toBe(category.id);
+    expect(new URL((await feedRequest).url()).searchParams.get("interests")).toBe(topic.id);
 
     await expect(page.getByTestId("feed-card").first()).toBeVisible();
     const titles = await page.getByTestId("feed-card").locator("h2").allTextContents();
-    expect(titles.filter((title) => title.includes("النبوة")).length).toBe(SEEDED_SHORTS_PER_CATEGORY);
+    expect(titles.filter((title) => title.includes("النبوة")).length).toBe(SEEDED_SHORTS_PER_TOPIC);
   });
 });
 
@@ -596,7 +609,7 @@ test.describe("CTAs, saving, and sharing", () => {
   test("a signed-in person can save and unsave, and it persists", async ({ page, context, baseURL }) => {
     const account = await createAccount();
     await signInBrowser(context, baseURL!, account.sessionToken);
-    await page.addInitScript(() => window.localStorage.removeItem("preferences.v1"));
+    await page.addInitScript(() => window.localStorage.removeItem("preferences.v2"));
     await prisma.userPreference.create({ data: { userId: account.id, onboardingSkipped: true } });
 
     await page.goto("/");
@@ -659,11 +672,11 @@ test.describe("CTAs, saving, and sharing", () => {
     await fire(page, "__fireState", 0);
     await moveNext(page);
 
-    await expect.poll(() => page.evaluate(() => window.localStorage.getItem("signals.v1"))).toContain("score");
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem("signals.v2"))).toContain("score");
     expect(signalRequests).toEqual([]);
   });
 
-  test("a signed-in person's completed video counts for that category", async ({ page, context, baseURL }) => {
+  test("a signed-in person's completed video counts for its channel's topic", async ({ page, context, baseURL }) => {
     const account = await createAccount();
     await signInBrowser(context, baseURL!, account.sessionToken);
     await prisma.userPreference.create({ data: { userId: account.id, onboardingSkipped: true } });
@@ -693,7 +706,7 @@ test.describe("shareable pages", () => {
     await expect(activeFrame(page)).toHaveAttribute("data-video-id", video.youtubeVideoId);
     await expect(page.locator(`[data-video-id="${video.id}"]`)).toHaveCount(1);
     await expect(page).toHaveTitle(new RegExp(video.title));
-    await expect(page.getByTestId("onboarding")).toHaveCount(0);
+    await expect(page.getByTestId("first-run")).toHaveCount(0);
   });
 
   test("hidden, removed, or invalid videos return 404", async ({ request }) => {
@@ -878,10 +891,9 @@ test.describe("layout and accessibility", () => {
 
 test.describe("sizing the video to the screen", () => {
   const seed = async (aspectRatio: number | null) => {
-    const category = await prisma.category.findFirstOrThrow({ where: { isActive: true } });
     const id = `z${randomUUID().slice(0, 10)}`.slice(0, 11);
     return prisma.video.create({
-      data: { youtubeVideoId: id, kind: "SHORT", classification: "SHORT_CANDIDATE", reviewedAt: new Date(), status: "PUBLISHED", publishedAt: new Date(), availability: "AVAILABLE", title: `مقاس ${id}`, channelTitle: "قناة الاختبار", thumbnails: [{ quality: "high", url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` }], durationSeconds: 40, aspectRatio, metadataFetchedAt: new Date(), feedKey: 1, categoryId: category.id },
+      data: { youtubeVideoId: id, kind: "SHORT", classification: "SHORT_CANDIDATE", reviewedAt: new Date(), status: "PUBLISHED", publishedAt: new Date(), availability: "AVAILABLE", title: `مقاس ${id}`, channelTitle: "قناة الاختبار", thumbnails: [{ quality: "high", url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` }], durationSeconds: 40, aspectRatio, metadataFetchedAt: new Date(), feedKey: 1 },
     });
   };
 
@@ -922,6 +934,7 @@ test.describe("sizing the video to the screen", () => {
 
   test("gives the phone's top bar to the video on the feed only, and keeps the account menu", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript((value) => window.localStorage.setItem("preferences.v2", value), SKIPPED_FIRST_VISIT);
     await page.goto("/");
     await expect(page.getByTestId("top-bar")).toBeHidden();
     await expect(page.getByTestId("feed-tabs").or(page.locator("[data-immersive-feed]")).getByTestId("account-menu").first()).toBeVisible();
@@ -931,6 +944,7 @@ test.describe("sizing the video to the screen", () => {
 });
 
 test("loads the next five thumbnails ahead", async ({ page }) => {
+  await page.addInitScript((value) => window.localStorage.setItem("preferences.v2", value), SKIPPED_FIRST_VISIT);
   await page.goto("/");
   const cards = page.getByTestId("feed-card");
   await cards.first().waitFor();
@@ -946,6 +960,7 @@ test("opens with the animated logo and the name, not skeletons", async ({ page }
     await new Promise((resolve) => setTimeout(resolve, 1500));
     await route.continue();
   });
+  await page.addInitScript((value) => window.localStorage.setItem("preferences.v2", value), SKIPPED_FIRST_VISIT);
   await page.goto("/");
   const loader = page.getByTestId("feed-loading");
   await expect(loader).toBeVisible();

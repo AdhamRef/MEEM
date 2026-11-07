@@ -36,17 +36,21 @@ npm run db:sync   # prisma db push, then recreates the text and TTL indexes
 
 **Explicit join models** represent the many-to-many pairs in §13.1. Each has a compound unique index, which prevents duplicates, and an index on its other side:
 
-`ArticleTopic`, `ArticleLibrary`, `ArticleVideo`, `ArticlePlaylist`, `VideoTopic`, `VideoLibrary`, `PlaylistTopic`, `PlaylistLibrary`, `ResourceTopic`, `ResourceLibrary`, `LibraryTopic`, `PlaylistItem`.
+`ArticleTopic`, `ArticleLibrary`, `ArticleVideo`, `ArticlePlaylist`, `ChannelTopic`, `VideoLibrary`, `PlaylistTopic`, `PlaylistLibrary`, `ResourceTopic`, `ResourceLibrary`, `LibraryTopic`, `PlaylistItem`.
 
 `ArticleLibrary` and `VideoLibrary` also hold `isFeatured`, which marks the items that lead a library's landing page (§14).
 
-**Hierarchies** use `parentId` on `Category`, `Topic`, and `Library`. MongoDB requires `NoAction` on self-relations, so services prevent cycles and handle children when deleting.
+**Hierarchies** use `parentId` on `Topic` and `Library`. MongoDB requires `NoAction` on self-relations, so services prevent cycles and handle children when deleting.
 
 **`TopicRelation` and `LibraryRelation`** link peers. Services reject self-links and store symmetric pairs in a canonical order.
 
 **`ContentRelation`** holds the optional editorial links in §13.2, between any two content items. It is polymorphic because those links cross every type, so its service validates both ends. `Favorite`, `UserActivity`, and `CollectionItem` are polymorphic for the same reason.
 
-**Copies for speed:** `Video.topicIds` and `Video.libraryIds` duplicate `VideoTopic` and `VideoLibrary`, because the feed filters on them constantly and joining through Prisma on MongoDB is slow. The join models are the source of truth. One service function writes both in a transaction.
+**A video's topics are its channel's.** `ChannelTopic` is the only link, so assigning a channel covers its thousands of videos, including future ones, with no per-video writes. Reading a topic's videos filters on `channelId`.
+
+**A person's channel switches** are in `UserChannelChoice`, which holds only channels switched by hand. A channel with no row follows the person's topics (`features/preferences/channel-choices.ts`), so channels added later and changes of topic need nothing rewritten.
+
+**Copies for speed:** `Video.libraryIds` duplicates `VideoLibrary`, because the feed filters on them constantly and joining through Prisma on MongoDB is slow. The join models are the source of truth. One service function writes both in a transaction.
 
 ## One `Video` model
 

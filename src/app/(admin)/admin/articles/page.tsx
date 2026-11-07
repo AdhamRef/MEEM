@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { strings } from "@/config/strings.ar";
 import { listArticlesForAdmin } from "@/features/articles/articles.service";
-import { listActiveCategories } from "@/features/categories/categories.service";
 import { checkPageAccess } from "@/lib/auth/guards";
 import { hasPermission } from "@/lib/permissions";
 import { bulkAssignArticlesAction, listMatchingArticleIdsAction } from "../shorts/actions";
@@ -24,7 +23,7 @@ export default async function AdminArticlesPage({ searchParams }: PageProps) {
 
   const { query, status, cursor } = await searchParams;
   const validStatus = status === "DRAFT" || status === "PUBLISHED" || status === "ARCHIVED" ? status : undefined;
-  const [page, categories] = await Promise.all([listArticlesForAdmin(actor, { query: query || undefined, status: validStatus, cursor }), listActiveCategories()]);
+  const page = await listArticlesForAdmin(actor, { query: query || undefined, status: validStatus, cursor });
 
   const c = strings.adminContent;
   const nextParams = new URLSearchParams();
@@ -64,7 +63,6 @@ export default async function AdminArticlesPage({ searchParams }: PageProps) {
         total={page.total}
         onListIds={listMatchingArticleIdsAction.bind(null, { ...(query ? { query } : {}), ...(validStatus ? { status: validStatus } : {}) })}
         canEdit={hasPermission(actor, "content.editAny")}
-        categories={categories.map((category) => ({ id: category.id, title: category.title }))}
         onAssign={bulkAssignArticlesAction}
         emptyMessage={query || validStatus ? c.noResults : c.empty}
         rows={page.items.map((row) => ({ id: row.id, href: `/admin/articles/${row.id}`, title: row.title, status: row.status, isArchived: row.isArchived }))}

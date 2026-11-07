@@ -1,6 +1,12 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./support/test";
+import { SKIPPED_FIRST_VISIT } from "./support/seed-feed";
+
+// Past the first-visit choices, which are a dialog of their own and take the focus when they open.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript((value) => window.localStorage.setItem("preferences.v2", value), SKIPPED_FIRST_VISIT);
+});
 
 const WIDTHS = [
   { name: "phone", width: 360, height: 740 },

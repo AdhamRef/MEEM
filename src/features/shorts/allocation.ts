@@ -1,4 +1,4 @@
-import type { CategoryScore } from "@/features/recommendations/scoring";
+import type { TopicScore } from "@/features/recommendations/scoring";
 
 /** A small seeded generator, so one page's choices are repeatable in tests. */
 export function seededRandom(seed: number): () => number {
@@ -21,9 +21,9 @@ function shuffled<T>(items: T[], random: () => number): T[] {
 }
 
 /** Share of `total` per score, keeping the sum exact by giving spare slots to the largest remainders. */
-function proportionalCounts(known: CategoryScore[], total: number): Map<string, number> {
+function proportionalCounts(known: TopicScore[], total: number): Map<string, number> {
   const sum = known.reduce((acc, item) => acc + item.score, 0);
-  const exact = known.map((item) => ({ id: item.categoryId, value: (item.score / sum) * total }));
+  const exact = known.map((item) => ({ id: item.topicId, value: (item.score / sum) * total }));
   const counts = new Map(exact.map((item) => [item.id, Math.floor(item.value)]));
 
   let spare = total - [...counts.values()].reduce((acc, count) => acc + count, 0);
@@ -37,20 +37,20 @@ function proportionalCounts(known: CategoryScore[], total: number): Map<string, 
 }
 
 export interface AllocationInput {
-  ranked: CategoryScore[];
+  ranked: TopicScore[];
   pageSize: number;
   explorationShare: number;
   seed: number;
-  /** The most of the page one category may take. Anything above it passes to the others. */
+  /** The most of the page one topic may take. Anything above it passes to the others. */
   maxCategoryShare?: number;
 }
 
 /**
- * How many videos each category gets on one page (§9.3, §9.4). Categories with a positive
+ * How many videos each topic gets on one page (§9.3, §9.4). Topics with a positive
  * score share the main slots in proportion to it, and the exploration share goes to the
  * rest. Someone with no history gets an even mix, since nothing is known about them.
  */
-export function allocateCategorySlots({ ranked, pageSize, explorationShare, seed, maxCategoryShare = 1 }: AllocationInput): Map<string, number> {
+export function allocateTopicSlots({ ranked, pageSize, explorationShare, seed, maxCategoryShare = 1 }: AllocationInput): Map<string, number> {
   const random = seededRandom(seed);
   const known = ranked.filter((item) => item.score > 0);
   const others = shuffled(
@@ -66,10 +66,10 @@ export function allocateCategorySlots({ ranked, pageSize, explorationShare, seed
     }
   };
 
-  // Repeatedly hands a capped category's excess to whichever category has the fewest.
+  // Repeatedly hands a capped topic's excess to whichever topic has the fewest.
   const limitShare = () => {
     const limit = Math.max(1, Math.ceil(pageSize * maxCategoryShare));
-    const order = [...known, ...others].map((item) => item.categoryId);
+    const order = [...known, ...others].map((item) => item.topicId);
     for (const id of order) {
       while ((counts.get(id) ?? 0) > limit) {
         const receiver = order.filter((other) => (counts.get(other) ?? 0) < limit).sort((a, b) => (counts.get(a) ?? 0) - (counts.get(b) ?? 0))[0];
@@ -82,7 +82,7 @@ export function allocateCategorySlots({ ranked, pageSize, explorationShare, seed
 
   if (known.length === 0) {
     spread(
-      others.map((item) => item.categoryId),
+      others.map((item) => item.topicId),
       pageSize,
     );
     limitShare();
@@ -92,7 +92,7 @@ export function allocateCategorySlots({ ranked, pageSize, explorationShare, seed
   // At least one slot whenever exploration is on, or small pages would never explore.
   const explorationSlots = others.length === 0 || explorationShare <= 0 ? 0 : Math.max(1, Math.round(pageSize * explorationShare));
   spread(
-    others.map((item) => item.categoryId),
+    others.map((item) => item.topicId),
     explorationSlots,
   );
   for (const [id, count] of proportionalCounts(known, pageSize - explorationSlots)) {
@@ -102,16 +102,20 @@ export function allocateCategorySlots({ ranked, pageSize, explorationShare, seed
   return counts;
 }
 
-/** The unread videos of one channel within one category. A channel of null means none is recorded. */
+/**
+ * One channel's unread videos, and the topics they count towards. A channel can have several
+ * topics, which all share this one pool, so a video can't appear twice. A channel of null means
+ * none is recorded.
+ */
 export interface VideoPool {
-  categoryId: string;
+  topicIds: string[];
   channelId: string | null;
   remaining: number;
 }
 
 export interface PagePlanInput {
-  /** Every category, best first, since any of them can step in to keep channels apart. */
-  categoryOrder: string[];
+  /** Every topic, best first, since any of them can step in to keep channels apart. */
+  topicOrder: string[];
   slots: Map<string, number>;
   pools: VideoPool[];
   /** Channels already shown, oldest first. */
@@ -124,7 +128,7 @@ export interface PagePlanInput {
 }
 
 export interface PagePick {
-  categoryId: string;
+  topicId: string;
   channelId: string | null;
 }
 
@@ -134,46 +138,49 @@ export interface PagePick {
  * is only somewhat likelier than a small one, and never returns within the spacing if any other
  * channel is available. When none is, the one seen longest ago comes next.
  */
-export function planFeedPage({ categoryOrder, slots, pools, recentChannels, channelSpacing, pageSize, channelFactor, seed }: PagePlanInput): PagePick[] {
+export function planFeedPage({ topicOrder, slots, pools, recentChannels, channelSpacing, pageSize, channelFactor, seed }: PagePlanInput): PagePick[] {
   const random = seededRandom(seed);
   const left = pools.map((pool) => ({ ...pool }));
   const slotsLeft = new Map(slots);
   const recent = [...recentChannels];
   const picks: PagePick[] = [];
-  let lastCategory: string | null = null;
+  let lastTopic: string | null = null;
 
-  const open = (categoryId: string) => left.filter((pool) => pool.categoryId === categoryId && pool.remaining > 0);
+  const open = (topicId: string) => left.filter((pool) => pool.topicIds.includes(topicId) && pool.remaining > 0);
   const isSpaced = (pool: VideoPool) => pool.channelId === null || !recent.slice(channelSpacing === 0 ? recent.length : -channelSpacing).includes(pool.channelId);
 
   while (picks.length < pageSize) {
-    // Categories with slots come first, most slots first, avoiding the one just used. Then the rest.
-    const withSlots = categoryOrder
+    // Topics with slots come first, most slots first, avoiding the one just used. Then the rest.
+    const withSlots = topicOrder
       .filter((id) => (slotsLeft.get(id) ?? 0) > 0)
-      .sort((a, b) => Number(a === lastCategory) - Number(b === lastCategory) || slotsLeft.get(b)! - slotsLeft.get(a)!);
-    const order = [...withSlots, ...categoryOrder.filter((id) => !withSlots.includes(id))];
+      .sort((a, b) => Number(a === lastTopic) - Number(b === lastTopic) || slotsLeft.get(b)! - slotsLeft.get(a)!);
+    const order = [...withSlots, ...topicOrder.filter((id) => !withSlots.includes(id))];
 
     let chosen: (typeof left)[number] | undefined;
-    for (const categoryId of order) {
-      const eligible = open(categoryId).filter(isSpaced);
+    let chosenTopic: string | undefined;
+    for (const topicId of order) {
+      const eligible = open(topicId).filter(isSpaced);
       if (eligible.length === 0) continue;
       // Square root, so a channel with 100 videos is 10 times likelier than one with 1, not 100.
       const weightOf = (pool: VideoPool) => Math.sqrt(pool.remaining) * (pool.channelId ? channelFactor(pool.channelId) : 1);
       let point = random() * eligible.reduce((total, pool) => total + weightOf(pool), 0);
       chosen = eligible.find((pool) => (point -= weightOf(pool)) < 0) ?? eligible.at(-1);
+      chosenTopic = topicId;
       break;
     }
     if (!chosen) {
       const lastSeen = (pool: VideoPool) => (pool.channelId ? recent.lastIndexOf(pool.channelId) : -1);
       const candidates: typeof left = order.flatMap(open);
       chosen = candidates.reduce<(typeof left)[number] | undefined>((best, pool) => (!best || lastSeen(pool) < lastSeen(best) ? pool : best), undefined);
+      chosenTopic = chosen && order.find((topicId) => chosen!.topicIds.includes(topicId));
     }
-    if (!chosen) break;
+    if (!chosen || !chosenTopic) break;
 
     chosen.remaining -= 1;
-    slotsLeft.set(chosen.categoryId, (slotsLeft.get(chosen.categoryId) ?? 0) - 1);
+    slotsLeft.set(chosenTopic, (slotsLeft.get(chosenTopic) ?? 0) - 1);
     if (chosen.channelId) recent.push(chosen.channelId);
-    lastCategory = chosen.categoryId;
-    picks.push({ categoryId: chosen.categoryId, channelId: chosen.channelId });
+    lastTopic = chosenTopic;
+    picks.push({ topicId: chosenTopic, channelId: chosen.channelId });
   }
   return picks;
 }

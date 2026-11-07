@@ -3,17 +3,17 @@ import {
   applySignal,
   decayedBehaviourScore,
   DEFAULT_SCORING_CONFIG as config,
-  rankCategories,
-  scoreCategory,
+  rankTopics,
+  scoreTopic,
   scoringConfigSchema,
-  type CategoryInterest,
+  type TopicInterest,
 } from "./scoring";
 
 const NOW = new Date("2026-06-01T00:00:00Z");
 const daysAgo = (days: number) => new Date(NOW.getTime() - days * 86_400_000);
 
-const interest = (categoryId: string, overrides: Partial<CategoryInterest> = {}): CategoryInterest => ({
-  categoryId,
+const interest = (topicId: string, overrides: Partial<TopicInterest> = {}): TopicInterest => ({
+  topicId,
   explicitWeight: 0,
   behaviourScore: 0,
   lastSignalAt: null,
@@ -69,44 +69,44 @@ describe("applySignal", () => {
   });
 });
 
-describe("scoreCategory", () => {
+describe("scoreTopic", () => {
   it("returns each part, so a score can be explained", () => {
-    const score = scoreCategory(interest("a", { explicitWeight: 1, behaviourScore: 2, lastSignalAt: NOW }), NOW, config);
-    expect(score).toEqual({ categoryId: "a", score: 12, interestPart: 10, behaviourPart: 2 });
+    const score = scoreTopic(interest("a", { explicitWeight: 1, behaviourScore: 2, lastSignalAt: NOW }), NOW, config);
+    expect(score).toEqual({ topicId: "a", score: 12, interestPart: 10, behaviourPart: 2 });
   });
 
   it("uses the configured weight rather than a fixed one", () => {
-    const score = scoreCategory(interest("a", { explicitWeight: 1 }), NOW, { ...config, selectedInterestWeight: 3 });
+    const score = scoreTopic(interest("a", { explicitWeight: 1 }), NOW, { ...config, selectedInterestWeight: 3 });
     expect(score.score).toBe(3);
   });
 });
 
-describe("rankCategories", () => {
-  it("puts selected categories first", () => {
-    const ranked = rankCategories(["a", "b", "c"], [interest("c", { explicitWeight: 1 })], NOW, config);
-    expect(ranked.map((item) => item.categoryId)).toEqual(["c", "a", "b"]);
+describe("rankTopics", () => {
+  it("puts selected topics first", () => {
+    const ranked = rankTopics(["a", "b", "c"], [interest("c", { explicitWeight: 1 })], NOW, config);
+    expect(ranked.map((item) => item.topicId)).toEqual(["c", "a", "b"]);
   });
 
-  it("lets behaviour order categories with the same selection state", () => {
+  it("lets behaviour order topics with the same selection state", () => {
     const interests = [interest("a", { behaviourScore: 1, lastSignalAt: NOW }), interest("b", { behaviourScore: 3, lastSignalAt: NOW })];
-    expect(rankCategories(["a", "b"], interests, NOW, config).map((item) => item.categoryId)).toEqual(["b", "a"]);
+    expect(rankTopics(["a", "b"], interests, NOW, config).map((item) => item.topicId)).toEqual(["b", "a"]);
   });
 
-  it("keeps a selected category above any behaviour at the default settings", () => {
+  it("keeps a selected topic above any behaviour at the default settings", () => {
     const interests = [interest("chosen", { explicitWeight: 1 }), interest("watched", { behaviourScore: config.maxBehaviourScore, lastSignalAt: NOW })];
-    expect(rankCategories(["watched", "chosen"], interests, NOW, config)[0]!.categoryId).toBe("chosen");
+    expect(rankTopics(["watched", "chosen"], interests, NOW, config)[0]!.topicId).toBe("chosen");
   });
 
-  it("includes categories with no history, in display order, and ignores unknown ones", () => {
-    const ranked = rankCategories(["b", "a"], [interest("not-active", { explicitWeight: 1 })], NOW, config);
-    expect(ranked.map((item) => item.categoryId)).toEqual(["b", "a"]);
+  it("includes topics with no history, in display order, and ignores unknown ones", () => {
+    const ranked = rankTopics(["b", "a"], [interest("not-active", { explicitWeight: 1 })], NOW, config);
+    expect(ranked.map((item) => item.topicId)).toEqual(["b", "a"]);
     expect(ranked.every((item) => item.score === 0)).toBe(true);
   });
 
   it("gives the same order every time", () => {
     const interests = [interest("a", { explicitWeight: 1 }), interest("b", { explicitWeight: 1 })];
-    const first = rankCategories(["a", "b", "c"], interests, NOW, config);
-    expect(rankCategories(["a", "b", "c"], interests, NOW, config)).toEqual(first);
+    const first = rankTopics(["a", "b", "c"], interests, NOW, config);
+    expect(rankTopics(["a", "b", "c"], interests, NOW, config)).toEqual(first);
   });
 });
 

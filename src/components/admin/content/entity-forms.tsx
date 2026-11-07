@@ -15,7 +15,6 @@ import { zodResolver } from "@/lib/validation/zod-resolver";
 import { ContentPicker } from "./content-picker";
 import { FormField } from "./form-field";
 import { ImageField } from "./image-field";
-import { selectClass } from "./list-frame";
 
 const c = strings.adminContent;
 
@@ -89,7 +88,6 @@ const topicFormSchema = z.object({
   introduction: optionalInput(1000),
   description: optionalInput(5000),
   coverImage: z.string().nullable(),
-  categoryId: z.string(),
   isFeatured: z.boolean(),
   displayOrder: orderInput,
 });
@@ -99,12 +97,11 @@ export interface TopicFormProps {
   id?: string;
   isPublished: boolean;
   canEdit: boolean;
-  categories: { id: string; title: string }[];
-  initial: { title: string; slug: string; introduction: string | null; description: string | null; coverImage: string | null; categoryId: string | null; isFeatured: boolean; displayOrder: number; parent: PickerItem | null };
+  initial: { title: string; slug: string; introduction: string | null; description: string | null; coverImage: string | null; isFeatured: boolean; displayOrder: number; parent: PickerItem | null };
   onSave: (input: unknown) => Promise<ActionResult<SaveOutcome>>;
 }
 
-export function TopicForm({ id, isPublished, canEdit, categories, initial, onSave }: TopicFormProps) {
+export function TopicForm({ id, isPublished, canEdit, initial, onSave }: TopicFormProps) {
   const form = useForm<TopicFormValues>({
     resolver: zodResolver(topicFormSchema),
     defaultValues: {
@@ -113,7 +110,6 @@ export function TopicForm({ id, isPublished, canEdit, categories, initial, onSav
       introduction: initial.introduction ?? "",
       description: initial.description ?? "",
       coverImage: initial.coverImage,
-      categoryId: initial.categoryId ?? "",
       isFeatured: initial.isFeatured,
       displayOrder: String(initial.displayOrder),
     },
@@ -135,7 +131,6 @@ export function TopicForm({ id, isPublished, canEdit, categories, initial, onSav
             introduction: blankToNull(values.introduction),
             description: blankToNull(values.description),
             coverImage: values.coverImage,
-            categoryId: values.categoryId || null,
             parentId: parent[0]?.id ?? null,
             isFeatured: values.isFeatured,
             displayOrder: Number(values.displayOrder || 0),
@@ -148,16 +143,6 @@ export function TopicForm({ id, isPublished, canEdit, categories, initial, onSav
       <AreaField label={c.introduction} registration={form.register("introduction")} error={errors.introduction?.message} disabled={!canEdit} />
       <AreaField label={c.description} rows={6} registration={form.register("description")} error={errors.description?.message} disabled={!canEdit} />
       <Controller control={form.control} name="coverImage" render={({ field }) => <ImageField label={c.cover} value={field.value} onChange={field.onChange} disabled={!canEdit} />} />
-      <FormField label={c.category}>
-        <select {...form.register("categoryId")} disabled={!canEdit} className={selectClass}>
-          <option value="">{c.noCategory}</option>
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.title}
-            </option>
-          ))}
-        </select>
-      </FormField>
       <ContentPicker label={c.parentTopic} type="TOPIC" single value={parent} onChange={setParent} excludeId={id} disabled={!canEdit} />
       <label className="flex min-h-11 items-center gap-2 text-sm">
         <input type="checkbox" {...form.register("isFeatured")} disabled={!canEdit} className="size-4" />

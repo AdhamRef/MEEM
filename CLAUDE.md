@@ -29,7 +29,9 @@ If the specification and plan conflict, or a requirement seems impossible, stop 
 - Free: no payments, subscriptions, paywalls, or ads.
 - Guests can browse everything without signing in and are never blocked by login prompts. Google sign-in is optional.
 - YouTube is the only video provider, played only through official embedding. Never download or re-host videos.
-- Recommendations are transparent, category-based scoring with a configurable exploration share. No AI or machine learning, and no inference of a user's beliefs or identity.
+- Recommendations are transparent, topic-based scoring with a configurable exploration share (plan decision D9 replaced the specification's categories with topics). No AI or machine learning, and no inference of a user's beliefs or identity.
+- A video's topics are its channel's (`ChannelTopic`), never assigned per video. The personal feed only respects someone's channel switches: Explore, search, and topic pages stay open to everything.
+- The first-visit choices fill the home page's screen but can always be skipped, and shared links never pass through them.
 - No internal likes, comments, follows, or messaging, and no gamification. Section 29 of the specification lists further deferred features.
 - Article publishing is `DRAFT → PUBLISHED`. The scientific reviewer role never adds a mandatory approval stage.
 - **No fake functionality.** Every visible control does something real. If a capability is unavailable, disable or omit it and explain why. Never invent statistics, popularity, or results, and never leave critical TODOs or placeholders.

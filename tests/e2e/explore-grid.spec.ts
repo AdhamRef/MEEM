@@ -5,8 +5,34 @@ import { expect, settled, test } from "./support/test";
 
 const unique = () => randomUUID().slice(0, 8);
 
-async function seedVideos(count: number, kind: "LONG_FORM" | "SHORT", categoryId: string, label: string) {
-  const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: `UC${unique()}`, title: `قناة ${label}` } });
+/** Removed after each test: a channel with public videos joins the first-visit choices, which other specs count exactly. */
+const created = { topicIds: [] as string[], channelIds: [] as string[] };
+
+test.afterEach(async () => {
+  const { topicIds, channelIds } = created;
+  await prisma.video.deleteMany({ where: { channelId: { in: channelIds } } });
+  await prisma.channelTopic.deleteMany({ where: { channelId: { in: channelIds } } });
+  await prisma.youTubeChannel.deleteMany({ where: { id: { in: channelIds } } });
+  await prisma.topic.deleteMany({ where: { id: { in: topicIds } } });
+  created.topicIds = [];
+  created.channelIds = [];
+});
+
+async function seedTopic(title: string, slug: string, status: "PUBLISHED" | "DRAFT" = "PUBLISHED") {
+  const topic = await prisma.topic.create({ data: { title, slug, status } });
+  created.topicIds.push(topic.id);
+  return topic;
+}
+
+async function seedChannel(topicId: string, label: string) {
+  const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: `UC${unique()}`, title: `قناة ${label}`, metadataFetchedAt: new Date(), topics: { create: { topicId } } } });
+  created.channelIds.push(channel.id);
+  return channel;
+}
+
+/** A video belongs to its channel's topics, so reaching a topic takes a channel linked to it. */
+async function seedVideos(count: number, kind: "LONG_FORM" | "SHORT", topicId: string, label: string) {
+  const channel = await seedChannel(topicId, label);
   for (let index = 0; index < count; index += 1) {
     await prisma.video.create({
       data: {
@@ -23,7 +49,6 @@ async function seedVideos(count: number, kind: "LONG_FORM" | "SHORT", categoryId
         ytPublishedAt: new Date("2026-01-01T00:00:00Z"),
         thumbnails: [{ quality: "high", url: "https://i.ytimg.com/vi/x/hqdefault.jpg" }],
         feedKey: Math.floor(Math.random() * 2 ** 31),
-        categoryId,
         metadataFetchedAt: new Date(),
       },
     });
@@ -40,10 +65,10 @@ test.describe("explore's video grid", () => {
 
   test("keeps loading as people scroll, far past one screenful, crediting YouTube on each", async ({ page }) => {
     const id = unique();
-    const category = await prisma.category.create({ data: { title: `شبكة ${id}`, slug: `grid-${id}` } });
-    await seedVideos(40, "LONG_FORM", category.id, `طويل ${id}`);
+    const topic = await seedTopic(`شبكة ${id}`, `grid-${id}`);
+    await seedVideos(40, "LONG_FORM", topic.id, `طويل ${id}`);
 
-    await page.goto(`/explore?category=grid-${id}`);
+    await page.goto(`/explore?topic=grid-${id}`);
     const tiles = page.getByTestId("video-tile");
     await expect(tiles.first()).toContainText("YouTube");
     await expect(tiles.first().getByTestId("video-duration")).toHaveText("12:05");
@@ -58,31 +83,50 @@ test.describe("explore's video grid", () => {
     await noSidewaysScroll(page);
   });
 
-  test("chips narrow to a category, and show which is chosen", async ({ page }) => {
+  test("chips narrow to a topic, and show which is chosen", async ({ page }) => {
     const id = unique();
-    const [first, second] = await Promise.all([prisma.category.create({ data: { title: `أول ${id}`, slug: `chip-a-${id}` } }), prisma.category.create({ data: { title: `ثان ${id}`, slug: `chip-b-${id}` } })]);
+    const [first, second] = await Promise.all([seedTopic(`أول ${id}`, `chip-a-${id}`), seedTopic(`ثان ${id}`, `chip-b-${id}`)]);
     await seedVideos(2, "LONG_FORM", first.id, `فيه ${id}`);
     await seedVideos(2, "LONG_FORM", second.id, `غيره ${id}`);
 
     await page.goto("/explore");
-    await page.getByTestId("section-categories").getByRole("link", { name: first.title }).click();
-    await expect(page).toHaveURL(new RegExp(`category=chip-a-${id}`));
+    await page.getByTestId("explore-topic").filter({ hasText: first.title }).click();
+    await expect(page).toHaveURL(new RegExp(`topic=chip-a-${id}`));
     await expect(page.getByRole("link", { name: first.title })).toHaveAttribute("aria-current", "page");
     await expect(page.getByText(`فيه ${id} 0`)).toBeVisible();
     await expect(page.getByText(`غيره ${id} 0`)).toHaveCount(0);
   });
 
-  test("an empty category says so honestly", async ({ page }) => {
+  test("only published topics with a channel become chips", async ({ page }) => {
     const id = unique();
-    await prisma.category.create({ data: { title: `فارغ ${id}`, slug: `empty-${id}` } });
-    await page.goto(`/explore?category=empty-${id}`);
+    const withChannel = await seedTopic(`بقناة ${id}`, `chip-channel-${id}`);
+    await seedChannel(withChannel.id, `بقناة ${id}`);
+    const withoutChannel = await seedTopic(`بلا قناة ${id}`, `chip-none-${id}`);
+    const draft = await seedTopic(`مسودة ${id}`, `chip-draft-${id}`, "DRAFT");
+    await seedChannel(draft.id, `مسودة ${id}`);
+
+    await page.goto("/explore");
+    const chips = page.getByTestId("section-topics");
+    await expect(chips.getByRole("link", { name: withChannel.title })).toHaveCount(1);
+    await expect(chips.getByRole("link", { name: withoutChannel.title })).toHaveCount(0);
+    await expect(chips.getByRole("link", { name: draft.title })).toHaveCount(0);
+  });
+
+  test("a topic with no videos yet says so honestly", async ({ page }) => {
+    const id = unique();
+    const topic = await seedTopic(`فارغ ${id}`, `empty-${id}`);
+    // Its channel has nothing public. A topic with no channel at all isn't browsable, and the address would show everything instead.
+    await seedChannel(topic.id, `فارغ ${id}`);
+    await page.goto(`/explore?topic=empty-${id}`);
+    await expect(page.getByRole("link", { name: topic.title })).toHaveAttribute("aria-current", "page");
     await expect(page.getByText("لا توجد مقاطع هنا بعد")).toBeVisible();
+    await expect(page.getByText("جرّب موضوعًا آخر، أو عد إلى الكل.")).toBeVisible();
   });
 
   test("a failed page offers to try again, and trying again works", async ({ page }) => {
     const id = unique();
-    const category = await prisma.category.create({ data: { title: `خطأ ${id}`, slug: `retry-${id}` } });
-    await seedVideos(30, "LONG_FORM", category.id, `تجربة ${id}`);
+    const topic = await seedTopic(`خطأ ${id}`, `retry-${id}`);
+    await seedVideos(30, "LONG_FORM", topic.id, `تجربة ${id}`);
 
     let shouldFail = true;
     let failures = 0;
@@ -91,7 +135,7 @@ test.describe("explore's video grid", () => {
       failures += 1;
       return route.fulfill({ status: 500, json: {} });
     });
-    await page.goto(`/explore?category=retry-${id}`);
+    await page.goto(`/explore?topic=retry-${id}`);
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     const retry = page.getByTestId("explore-retry");
     await expect(retry).toBeVisible({ timeout: 15_000 });
@@ -109,10 +153,10 @@ test.describe("explore's video grid", () => {
 
   test("the three-dot menu shares, and links to YouTube", async ({ page }) => {
     const id = unique();
-    const category = await prisma.category.create({ data: { title: `قائمة ${id}`, slug: `menu-${id}` } });
-    await seedVideos(1, "LONG_FORM", category.id, `خيارات ${id}`);
+    const topic = await seedTopic(`قائمة ${id}`, `menu-${id}`);
+    await seedVideos(1, "LONG_FORM", topic.id, `خيارات ${id}`);
 
-    await page.goto(`/explore?category=menu-${id}`);
+    await page.goto(`/explore?topic=menu-${id}`);
     await page.getByTestId("video-menu").first().click();
     await expect(page.getByRole("menuitem", { name: "مشاركة" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "المشاهدة على YouTube" })).toHaveAttribute("href", /youtube\.com\/watch/);

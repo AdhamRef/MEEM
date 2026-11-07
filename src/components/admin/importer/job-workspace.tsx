@@ -44,14 +44,13 @@ interface JobWorkspaceProps {
   startedAt: string;
   initial: JobProgress;
   initialErrors: string[];
-  categories: { id: string; title: string }[];
 }
 
 /**
  * The browser drives the job in small steps. Each is saved on the server, so closing this page
  * loses nothing: opening it again continues from the same place.
  */
-export function JobWorkspace({ jobId, jobType, channel, startedAt, initial, initialErrors, categories }: JobWorkspaceProps) {
+export function JobWorkspace({ jobId, jobType, channel, startedAt, initial, initialErrors }: JobWorkspaceProps) {
   const router = useRouter();
   const [progress, setProgress] = useState<JobProgress>(initial);
   const [notice, setNotice] = useState<string | null>(initial.message ?? initialErrors.at(-1) ?? null);
@@ -68,8 +67,6 @@ export function JobWorkspace({ jobId, jobType, channel, startedAt, initial, init
   const [isBusy, setIsBusy] = useState(false);
 
   const [kind, setKind] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [topics, setTopics] = useState<PickerItem[]>([]);
   const [libraries, setLibraries] = useState<PickerItem[]>([]);
   const [playlists, setPlaylists] = useState<PickerItem[]>([]);
 
@@ -221,8 +218,6 @@ export function JobWorkspace({ jobId, jobType, channel, startedAt, initial, init
       const result = await assignSelectedCandidatesAction({
         jobId,
         ...(kind ? { kind } : {}),
-        ...(categoryId ? { categoryId } : {}),
-        topicIds: topics.map((item) => item.id),
         libraryIds: libraries.map((item) => item.id),
         playlistIds: playlists.map((item) => item.id),
       });
@@ -441,23 +436,12 @@ export function JobWorkspace({ jobId, jobType, channel, startedAt, initial, init
                 <option value="LONG_FORM">{strings.content.longVideo}</option>
               </select>
             </label>
-            <label className="block space-y-1.5 text-sm font-medium">
-              {strings.adminContent.category}
-              <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className={selectClass} data-testid="assign-category">
-                <option value="">{strings.adminContent.noCategory}</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <ContentPicker label={strings.editor.topics} type="TOPIC" value={topics} onChange={setTopics} />
             <ContentPicker label={strings.editor.libraries} type="LIBRARY" value={libraries} onChange={setLibraries} />
             <ContentPicker label={t.curatedPlaylists} type="PLAYLIST" value={playlists} onChange={setPlaylists} />
             <Button type="button" variant="secondary" className="w-full" disabled={isBusy || selectedCount === 0} onClick={applyAssignment} data-testid="assign-apply">
               {t.assignApply}
             </Button>
+            <p className="text-xs text-text-secondary">{t.topicsFollowChannel}</p>
             <p className="text-xs text-text-secondary">{t.draftNote}</p>
           </aside>
         ) : null}

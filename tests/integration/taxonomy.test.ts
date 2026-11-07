@@ -1,12 +1,12 @@
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createCategory, listActiveCategories, setCategoryActive, updateCategory } from "@/features/categories/categories.service";
-import { SEED_CATEGORIES, seedTaxonomy } from "@/features/categories/seed-taxonomy";
+import { getInterestCatalogue, listBrowsableTopics, listPublicTopicOptions } from "@/features/topics/catalogue.service";
+import { SEED_TOPICS, seedTopics } from "@/features/topics/seed-topics";
 import { createTopic, getPublishedTopicBySlug, listPublishedTopics, setTopicArchived, setTopicPublished, updateTopic } from "@/features/topics/topics.service";
 import { AppError } from "@/lib/errors";
 import type { Actor } from "@/lib/permissions";
 import { clearDatabase, createTestClient } from "./helpers";
-import { createActor } from "./phase3-helpers";
+import { createActor, createChannel, createPublishedTopic } from "./phase3-helpers";
 
 let prisma: PrismaClient;
 let admin: Actor;
@@ -34,85 +34,40 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe("seedTaxonomy", () => {
-  it("creates the twelve starting categories, in order, active, each with a slug and icon", async () => {
-    const { created } = await seedTaxonomy(prisma);
+describe("seedTopics", () => {
+  it("creates the twelve starting topics, in order, published, each with a slug and introduction", async () => {
+    const { created } = await seedTopics(prisma);
     expect(created).toHaveLength(12);
 
-    const categories = await listActiveCategories();
-    expect(categories.map((category) => category.slug)).toEqual(SEED_CATEGORIES.map((category) => category.slug));
-    expect(categories.every((category) => category.icon && category.description)).toBe(true);
+    const options = await listPublicTopicOptions();
+    expect(options.map((topic) => topic.slug)).toEqual(SEED_TOPICS.map((topic) => topic.slug));
+
+    const stored = await prisma.topic.findMany();
+    expect(stored.every((topic) => topic.status === "PUBLISHED" && !topic.isArchived && topic.introduction)).toBe(true);
   });
 
   it("is safe to run again and never overwrites an editor's changes", async () => {
-    await seedTaxonomy(prisma);
-    const fiqh = await prisma.category.findUniqueOrThrow({ where: { slug: "الفقه" } });
-    await updateCategory(admin, fiqh.id, { title: "فقه العبادات" });
-    await setCategoryActive(admin, (await prisma.category.findUniqueOrThrow({ where: { slug: "النبوة" } })).id, false);
+    await seedTopics(prisma);
+    const fiqh = await prisma.topic.findUniqueOrThrow({ where: { slug: "الفقه" } });
+    await updateTopic(admin, fiqh.id, { title: "فقه العبادات" });
+    await setTopicArchived(admin, (await prisma.topic.findUniqueOrThrow({ where: { slug: "النبوة" } })).id, true);
 
-    const second = await seedTaxonomy(prisma);
+    const second = await seedTopics(prisma);
 
     expect(second).toEqual({ created: [], alreadyPresent: 12 });
-    expect((await prisma.category.findUniqueOrThrow({ where: { slug: "الفقه" } })).title).toBe("فقه العبادات");
-    expect((await prisma.category.findUniqueOrThrow({ where: { slug: "النبوة" } })).isActive).toBe(false);
+    expect((await prisma.topic.findUniqueOrThrow({ where: { slug: "الفقه" } })).title).toBe("فقه العبادات");
+    expect((await prisma.topic.findUniqueOrThrow({ where: { slug: "النبوة" } })).isArchived).toBe(true);
   });
 
   it("gives the same result when two runs overlap", async () => {
-    await Promise.all([seedTaxonomy(prisma), seedTaxonomy(prisma)]);
-    expect(await prisma.category.count()).toBe(12);
+    await Promise.all([seedTopics(prisma), seedTopics(prisma)]);
+    expect(await prisma.topic.count()).toBe(12);
   });
 
   it("restores only what's missing", async () => {
-    await seedTaxonomy(prisma);
-    await prisma.category.delete({ where: { slug: "الفقه" } });
-    expect((await seedTaxonomy(prisma)).created).toEqual(["الفقه"]);
-  });
-});
-
-describe("categories", () => {
-  it("derives an Arabic slug from the title", async () => {
-    const category = await createCategory(admin, { title: "علوم الحديث" });
-    expect(category.slug).toBe("علوم-الحديث");
-  });
-
-  it("rejects a duplicate slug as a conflict, not a server error", async () => {
-    await createCategory(admin, { title: "الفقه" });
-    expect(await errorCodeOf(createCategory(admin, { title: "الفقه" }))).toBe("CONFLICT");
-  });
-
-  it.each([
-    ["an empty title", { title: "  " }],
-    ["a title with nothing usable for a slug", { title: "!!!" }],
-    ["a bad slug", { title: "x", slug: "not a slug" }],
-    ["an icon outside the list", { title: "x", icon: "skull" }],
-    ["an unknown field", { title: "x", isActive: false }],
-    ["a malformed parent", { title: "x", parentId: "nope" }],
-    ["a parent that doesn't exist", { title: "x", parentId: MISSING_ID }],
-  ])("rejects %s", async (_name, input) => {
-    expect(await errorCodeOf(createCategory(admin, input))).toBe("VALIDATION");
-  });
-
-  it("supports a hierarchy, but no cycles", async () => {
-    const parent = await createCategory(admin, { title: "الأب" });
-    const child = await createCategory(admin, { title: "الابن", parentId: parent.id });
-    const grandchild = await createCategory(admin, { title: "الحفيد", parentId: child.id });
-
-    expect(await errorCodeOf(updateCategory(admin, parent.id, { parentId: parent.id }))).toBe("VALIDATION");
-    expect(await errorCodeOf(updateCategory(admin, parent.id, { parentId: grandchild.id }))).toBe("VALIDATION");
-  });
-
-  it("hides inactive categories from public lists and shows them again when reactivated", async () => {
-    const category = await createCategory(admin, { title: "الفقه" });
-    await setCategoryActive(admin, category.id, false);
-    expect(await listActiveCategories()).toEqual([]);
-
-    await setCategoryActive(admin, category.id, true);
-    expect(await listActiveCategories()).toHaveLength(1);
-  });
-
-  it("reports a missing category", async () => {
-    expect(await errorCodeOf(updateCategory(admin, MISSING_ID, { title: "x" }))).toBe("NOT_FOUND");
-    expect(await errorCodeOf(setCategoryActive(admin, MISSING_ID, false))).toBe("NOT_FOUND");
+    await seedTopics(prisma);
+    await prisma.topic.delete({ where: { slug: "الفقه" } });
+    expect((await seedTopics(prisma)).created).toEqual(["الفقه"]);
   });
 });
 
@@ -133,13 +88,39 @@ describe("topics", () => {
     expect(updated.searchText).not.toContain("الصلاه");
   });
 
-  it("rejects a category or parent that doesn't exist, and cycles", async () => {
-    expect(await errorCodeOf(createTopic(admin, { title: "x", categoryId: MISSING_ID }))).toBe("VALIDATION");
-    expect(await errorCodeOf(createTopic(admin, { title: "x", parentId: MISSING_ID }))).toBe("VALIDATION");
+  it("derives an Arabic slug from the title", async () => {
+    const topic = await createTopic(admin, { title: "علوم الحديث" });
+    expect(topic.slug).toBe("علوم-الحديث");
+  });
 
+  it("rejects a duplicate explicit slug as a conflict, not a server error", async () => {
+    await createTopic(admin, { title: "الفقه", slug: "fiqh" });
+    expect(await errorCodeOf(createTopic(admin, { title: "الفقه", slug: "fiqh" }))).toBe("CONFLICT");
+  });
+
+  it.each([
+    ["an empty title", { title: "  " }],
+    ["a title with nothing usable for a slug", { title: "!!!" }],
+    ["a bad slug", { title: "x", slug: "not a slug" }],
+    ["an unknown field", { title: "x", isActive: false }],
+    ["a malformed parent", { title: "x", parentId: "nope" }],
+    ["a parent that doesn't exist", { title: "x", parentId: MISSING_ID }],
+  ])("rejects %s", async (_name, input) => {
+    expect(await errorCodeOf(createTopic(admin, input))).toBe("VALIDATION");
+  });
+
+  it("supports a hierarchy, but no cycles", async () => {
     const parent = await createTopic(admin, { title: "الأب" });
     const child = await createTopic(admin, { title: "الابن", parentId: parent.id });
-    expect(await errorCodeOf(updateTopic(admin, parent.id, { parentId: child.id }))).toBe("VALIDATION");
+    const grandchild = await createTopic(admin, { title: "الحفيد", parentId: child.id });
+
+    expect(await errorCodeOf(updateTopic(admin, parent.id, { parentId: parent.id }))).toBe("VALIDATION");
+    expect(await errorCodeOf(updateTopic(admin, parent.id, { parentId: grandchild.id }))).toBe("VALIDATION");
+  });
+
+  it("reports a missing topic", async () => {
+    expect(await errorCodeOf(updateTopic(admin, MISSING_ID, { title: "x" }))).toBe("NOT_FOUND");
+    expect(await errorCodeOf(setTopicArchived(admin, MISSING_ID, true))).toBe("NOT_FOUND");
   });
 
   it("shows only published, unarchived topics publicly", async () => {
@@ -179,5 +160,45 @@ describe("topics", () => {
 
   it("rejects a malformed cursor", async () => {
     expect(await errorCodeOf(listPublishedTopics({ cursor: "nope" }))).toBe("VALIDATION");
+  });
+});
+
+describe("the topic catalogue", () => {
+  async function publicVideo(channelId: string, youtubeVideoId: string) {
+    return prisma.video.create({ data: { youtubeVideoId, kind: "SHORT", classification: "SHORT_CANDIDATE", status: "PUBLISHED", availability: "AVAILABLE", title: "مقطع", feedKey: 1, channelId } });
+  }
+
+  it("offers for filtering only public topics, in order", async () => {
+    const [first, second] = [await createPublishedTopic(prisma), await createPublishedTopic(prisma)];
+    await createPublishedTopic(prisma, { status: "DRAFT" });
+    await createPublishedTopic(prisma, { isArchived: true });
+    expect((await listPublicTopicOptions()).map((topic) => topic.id)).toEqual([first.id, second.id]);
+  });
+
+  it("offers for browsing videos only public topics that have a channel", async () => {
+    const withChannel = await createPublishedTopic(prisma);
+    await createPublishedTopic(prisma);
+    const draft = await createPublishedTopic(prisma, { status: "DRAFT" });
+    await createChannel(prisma, [withChannel.id, draft.id]);
+    expect((await listBrowsableTopics()).map((topic) => topic.id)).toEqual([withChannel.id]);
+  });
+
+  it("offers as interests only what has something to watch, so a choice can't empty the feed", async () => {
+    const watchable = await createPublishedTopic(prisma);
+    const emptyChannelTopic = await createPublishedTopic(prisma);
+    await createPublishedTopic(prisma);
+    const draft = await createPublishedTopic(prisma, { status: "DRAFT" });
+
+    const channel = await createChannel(prisma, [watchable.id, draft.id]);
+    await publicVideo(channel.id, "catalogue01");
+    await publicVideo(channel.id, "catalogue02");
+    await createChannel(prisma, [emptyChannelTopic.id]);
+    const withdrawn = await createChannel(prisma, [watchable.id], { title: "" });
+    await publicVideo(withdrawn.id, "catalogue03");
+
+    const { topics, channels } = await getInterestCatalogue();
+    expect(topics.map((topic) => topic.id)).toEqual([watchable.id]);
+    expect(topics[0]?.channelIds).toEqual([channel.id]);
+    expect(channels).toEqual([expect.objectContaining({ id: channel.id, videoCount: 2, topicIds: [watchable.id] })]);
   });
 });

@@ -1,8 +1,9 @@
 import { guestPreferencesSchema, type GuestPreferences } from "./schemas";
 
-export const GUEST_PREFERENCES_KEY = "preferences.v1";
+// v2: choices are topics and channels now. What v1 held pointed at categories, so it's left behind.
+export const GUEST_PREFERENCES_KEY = "preferences.v2";
 
-export const EMPTY_GUEST_PREFERENCES: GuestPreferences = { version: 1, selectedCategoryIds: [], onboarding: "pending" };
+export const EMPTY_GUEST_PREFERENCES: GuestPreferences = { version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "pending" };
 
 /** Storage can throw or be empty in private windows, and its content can't be trusted. */
 export function readGuestPreferences(storage: Pick<Storage, "getItem">): GuestPreferences {
@@ -35,5 +36,5 @@ export function clearGuestPreferences(storage: Pick<Storage, "removeItem">): voi
 }
 
 export function hasGuestPreferences(preferences: GuestPreferences): boolean {
-  return preferences.onboarding !== "pending" || preferences.selectedCategoryIds.length > 0;
+  return preferences.onboarding !== "pending" || preferences.selectedTopicIds.length > 0 || Object.keys(preferences.channelChoices).length > 0;
 }

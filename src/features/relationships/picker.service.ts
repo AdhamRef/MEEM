@@ -5,7 +5,7 @@ import { assertPermission, hasPermission, type Actor } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { normalizeArabicForSearch } from "@/lib/search/normalize";
 
-export const PICKER_TYPES = ["ARTICLE", "VIDEO", "TOPIC", "LIBRARY", "PLAYLIST", "RESOURCE", "STAFF"] as const;
+export const PICKER_TYPES = ["ARTICLE", "VIDEO", "TOPIC", "LIBRARY", "PLAYLIST", "RESOURCE", "STAFF", "CHANNEL"] as const;
 export type PickerType = (typeof PICKER_TYPES)[number];
 
 export interface PickerItem {
@@ -30,6 +30,8 @@ const STAFF_ROLES = ["CONTRIBUTOR", "SCIENTIFIC_REVIEWER", "EDITOR", "ADMIN", "S
 /** YouTube is credited on each item that shows its content, here too. */
 export const videoPickerLabel = (video: { kind: string; channelTitle: string | null }) =>
   [video.kind === "SHORT" ? strings.content.short : strings.content.longVideo, video.channelTitle, strings.feed.source].filter(Boolean).join(" · ");
+
+export const channelPickerLabel = (channel: { handle: string | null }) => [channel.handle, strings.feed.source].filter(Boolean).join(" · ");
 
 /**
  * Searchable selection for editors (§13.3). Staff without content.viewAny see only published
@@ -80,6 +82,16 @@ export async function searchPicker(actor: Actor | null, rawInput: unknown): Prom
         hint: videoPickerLabel(row),
         isDraft: isDraft(row.status),
       }));
+    case "CHANNEL": {
+      // A channel whose data was withdrawn has no name to choose it by.
+      const channels = await prisma.youTubeChannel.findMany({
+        where: { title: query ? { contains: query.trim(), mode: "insensitive" } : { not: "" }, ...notSelf },
+        orderBy: { title: "asc" },
+        take: RESULT_LIMIT,
+        select: { id: true, title: true, handle: true },
+      });
+      return channels.filter((row) => row.title).map((row) => ({ id: row.id, type, label: row.title, hint: channelPickerLabel(row) }));
+    }
     case "STAFF": {
       // Who can be assigned is only useful, and only visible, to people who can assign.
       assertPermission(actor, "content.editAny");

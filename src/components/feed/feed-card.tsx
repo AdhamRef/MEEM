@@ -210,8 +210,7 @@ export const FeedCard = forwardRef<HTMLElement, FeedCardProps>(function FeedCard
       <div className="sr-only">
         <h2 dir="auto">{video.title}</h2>
         {video.channelTitle ? <p dir="auto">{video.channelTitle}</p> : null}
-        {video.category ? <p>{video.category.title}</p> : null}
-        {video.topics.length ? <p>{video.topics.slice(0, 2).join("، ")}</p> : null}
+        {video.topics.length ? <p>{video.topics.slice(0, 2).map((topic) => topic.title).join("، ")}</p> : null}
       </div>
 
       {/* Only takes up room when there's something to say. */}

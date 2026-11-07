@@ -12,6 +12,6 @@ export function mergeOnboardingState(account: OnboardingState, guest: Onboarding
  * choices are cleared from the browser after a merge, so this only happens once per choice
  * and can't undo a removal made later on another device.
  */
-export function mergeSelectedCategories(account: string[], guest: string[], activeCategoryIds: ReadonlySet<string>): string[] {
-  return [...new Set([...account, ...guest])].filter((id) => activeCategoryIds.has(id));
+export function mergeSelectedTopics(account: string[], guest: string[], activeTopicIds: ReadonlySet<string>): string[] {
+  return [...new Set([...account, ...guest])].filter((id) => activeTopicIds.has(id));
 }

@@ -1,7 +1,6 @@
 import type { PrismaClient, UserRole } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { getAdminOverview } from "@/features/admin/overview.service";
-import { createCategory, setCategoryActive, updateCategory } from "@/features/categories/categories.service";
 import { DEFAULT_SCORING_CONFIG } from "@/features/recommendations/scoring";
 import { getScoringConfig, SCORING_SETTING_KEY, updateScoringConfig } from "@/features/recommendations/settings.service";
 import { createTopic, setTopicArchived, setTopicPublished, updateTopic } from "@/features/topics/topics.service";
@@ -39,7 +38,6 @@ describe("privileged operations called directly, without any UI", () => {
   type Operation = [name: string, allowedRoles: UserRole[], run: (actor: Actor | null) => Promise<unknown>];
 
   const operations: Operation[] = [
-    ["createCategory", ["ADMIN", "SUPER_ADMIN"], (actor) => createCategory(actor, { title: "مجال تجريبي" })],
     ["createTopic", ["EDITOR", "ADMIN", "SUPER_ADMIN"], (actor) => createTopic(actor, { title: "موضوع تجريبي" })],
     ["updateScoringConfig", ["SUPER_ADMIN"], (actor) => updateScoringConfig(actor, DEFAULT_SCORING_CONFIG)],
     ["getAdminOverview", ["CONTRIBUTOR", "SCIENTIFIC_REVIEWER", "EDITOR", "ADMIN", "SUPER_ADMIN"], (actor) => getAdminOverview(actor)],
@@ -62,9 +60,9 @@ describe("privileged operations called directly, without any UI", () => {
   }
 
   it("a refused operation writes nothing and no audit record", async () => {
-    const editor = await createActor(prisma, "EDITOR");
-    await errorCodeOf(createCategory(editor, { title: "مجال" }));
-    expect(await prisma.category.count()).toBe(0);
+    const contributor = await createActor(prisma, "CONTRIBUTOR");
+    expect(await errorCodeOf(createTopic(contributor, { title: "موضوع" }))).toBe("FORBIDDEN");
+    expect(await prisma.topic.count()).toBe(0);
     expect(await prisma.auditLog.count()).toBe(0);
   });
 });
@@ -201,10 +199,7 @@ describe("audit logging", () => {
   it("records each kind of privileged change", async () => {
     const superAdmin = await createActor(prisma, "SUPER_ADMIN");
 
-    const category = await createCategory(superAdmin, { title: "الفقه" });
-    await updateCategory(superAdmin, category.id, { description: "وصف" });
-    await setCategoryActive(superAdmin, category.id, false);
-    const topic = await createTopic(superAdmin, { title: "الطهارة", categoryId: category.id });
+    const topic = await createTopic(superAdmin, { title: "الطهارة" });
     await updateTopic(superAdmin, topic.id, { isFeatured: true });
     await setTopicPublished(superAdmin, topic.id, true);
     await setTopicArchived(superAdmin, topic.id, true);
@@ -212,9 +207,6 @@ describe("audit logging", () => {
 
     const logs = await prisma.auditLog.findMany({ orderBy: { createdAt: "asc" } });
     expect(logs.map((log) => log.action)).toEqual([
-      "category.create",
-      "category.update",
-      "category.deactivate",
       "topic.create",
       "topic.update",
       "topic.publish",
@@ -226,13 +218,13 @@ describe("audit logging", () => {
 
   it("commits with the change, so a failed change leaves no record claiming it happened", async () => {
     const admin = await createActor(prisma, "ADMIN");
-    await createCategory(admin, { title: "الفقه" });
+    await createTopic(admin, { title: "الفقه", slug: "fiqh" });
     const before = await prisma.auditLog.count();
 
-    expect(await errorCodeOf(createCategory(admin, { title: "الفقه" }))).toBe("CONFLICT");
+    expect(await errorCodeOf(createTopic(admin, { title: "الفقه", slug: "fiqh" }))).toBe("CONFLICT");
 
     expect(await prisma.auditLog.count()).toBe(before);
-    expect(await prisma.category.count()).toBe(1);
+    expect(await prisma.topic.count()).toBe(1);
   });
 });
 

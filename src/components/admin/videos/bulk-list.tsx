@@ -31,12 +31,11 @@ interface BulkListProps {
   /** How many items match the filter, across every page. */
   total: number;
   onListIds: (cursor?: string) => Promise<ActionResult<{ ids: string[]; nextCursor: string | null }>>;
-  categories: { id: string; title: string }[];
   canEdit: boolean;
   canPublish?: boolean;
   /** Offered only for videos, since an article's kind doesn't change. */
   showKind?: boolean;
-  onAssign: (input: { ids: string[]; kind?: string; categoryId?: string; addTopicIds: string[] }) => Promise<ActionResult<{ changed: number }>>;
+  onAssign: (input: { ids: string[]; kind?: string; addTopicIds?: string[] }) => Promise<ActionResult<{ changed: number }>>;
   onPublish?: (input: { ids: string[]; isPublished: boolean }) => Promise<ActionResult<{ changed: number; skipped: number }>>;
   emptyMessage: ReactNode;
 }
@@ -52,13 +51,12 @@ type Pending = { description: string; run: (ids: string[]) => Promise<void> };
  * "All" means everything the current filter matches, across every page, not only what's visible.
  * It's kept as "all, except these", so it needs no list of IDs until something is actually applied.
  */
-export function BulkList({ rows, total, onListIds, categories, canEdit, canPublish, showKind, onAssign, onPublish, emptyMessage }: BulkListProps) {
+export function BulkList({ rows, total, onListIds, canEdit, canPublish, showKind, onAssign, onPublish, emptyMessage }: BulkListProps) {
   const router = useRouter();
   const [isAll, setIsAll] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [kind, setKind] = useState("");
-  const [categoryId, setCategoryId] = useState("");
   const [topics, setTopics] = useState<PickerItem[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -68,7 +66,7 @@ export function BulkList({ rows, total, onListIds, categories, canEdit, canPubli
 
   const count = isAll ? Math.max(0, total - excluded.size) : selected.size;
   const isEverythingSelected = total > 0 && count === total;
-  const hasAssignment = Boolean(kind || categoryId || topics.length);
+  const hasAssignment = showKind ? Boolean(kind) : topics.length > 0;
 
   useEffect(() => {
     if (headerCheck.current) headerCheck.current.indeterminate = count > 0 && !isEverythingSelected;
@@ -157,13 +155,12 @@ export function BulkList({ rows, total, onListIds, categories, canEdit, canPubli
   const assign = () =>
     askFirst(v.confirmAssign, async (ids) => {
       let changed = 0;
-      const addTopicIds = topics.map((item) => item.id);
-      const isComplete = await inBatches(ids, (batch) => onAssign({ ids: batch, ...(kind ? { kind } : {}), ...(categoryId ? { categoryId } : {}), addTopicIds }), (data) => (changed += data.changed));
+      // Videos take their topics from their channel, so only articles are given topics here.
+      const isComplete = await inBatches(ids, (batch) => onAssign(showKind ? { ids: batch, kind } : { ids: batch, addTopicIds: topics.map((item) => item.id) }), (data) => (changed += data.changed));
       if (changed > 0) router.refresh();
       if (!isComplete) return;
       setMessage({ text: v.changed(changed), isError: false });
       setKind("");
-      setCategoryId("");
       setTopics([]);
       clear();
     });
@@ -221,20 +218,11 @@ export function BulkList({ rows, total, onListIds, categories, canEdit, canPubli
                   </select>
                 </label>
               ) : null}
-              <label className="space-y-1.5 text-sm font-medium">
-                {strings.adminContent.category}
-                <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className={selectClass} data-testid="bulk-category">
-                  <option value="">{v.noChange}</option>
-                  {categories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="sm:col-span-2">
-                <ContentPicker label={v.addTopics} type="TOPIC" value={topics} onChange={setTopics} max={10} />
-              </div>
+              {showKind ? null : (
+                <div className="sm:col-span-2">
+                  <ContentPicker label={v.addTopics} type="TOPIC" value={topics} onChange={setTopics} max={10} />
+                </div>
+              )}
             </div>
           ) : null}
 

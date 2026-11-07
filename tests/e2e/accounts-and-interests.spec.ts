@@ -1,58 +1,40 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
-import { createAccount, prisma, selectedCategoryTitles, signInBrowser } from "./support/accounts";
+import { createAccount, prisma, selectedTopicTitles, signInBrowser } from "./support/accounts";
 import { expect, test } from "./support/test";
 
 const accountMenu = (page: Page) => page.locator('[data-testid="account-menu"]:visible');
-const interest = (page: Page, title: string) => page.getByRole("button", { name: title });
-/** On the home page, where category tabs have the same names as the first-visit prompt's choices. */
-const promptInterest = (page: Page, title: string) => page.getByTestId("onboarding").getByRole("button", { name: title });
-const startButton = (page: Page) => page.getByRole("button", { name: "ابدأ", exact: true });
+const interest = (page: Page, title: string) => page.getByTestId("topic-tile").filter({ hasText: title });
+
+/** Chooses topics on the first visit, and takes the default channels. */
+async function chooseOnFirstVisit(page: Page, ...titles: string[]) {
+  await page.goto("/");
+  for (const title of titles) await interest(page, title).click();
+  await page.getByTestId("first-run-next").click();
+  await page.getByTestId("first-run-finish").click();
+  await expect(page.getByTestId("first-run")).toHaveCount(0);
+}
 
 test.describe("guests", () => {
-  test("can use the site with no sign-in prompt or dialog in the way", async ({ page }) => {
+  test("can use the site with no sign-in prompt in the way", async ({ page }) => {
+    // The first-visit choices are the one dialog on the home page, covered in first-run.spec.ts.
     const response = await page.goto("/");
     expect(response?.status()).toBe(200);
-    await expect(page.locator("h1")).toBeVisible();
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator("h1")).toBeAttached();
+    await expect(page.getByTestId("first-run").getByText("تسجيل الدخول")).toHaveCount(0);
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    expect((await page.goto("/topics"))?.status()).toBe(200);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     expect((await page.goto("/interests"))?.status()).toBe(200);
   });
 
-  test("can choose interests on the first visit, and it isn't asked again", async ({ page }) => {
-    await page.goto("/");
-    await promptInterest(page, "الفقه").click();
-    await promptInterest(page, "التزكية").click();
-    await startButton(page).click();
-    await expect(startButton(page)).toHaveCount(0);
-
-    await page.reload();
-    await expect(page.locator("h1")).toBeVisible();
-    await page.waitForLoadState("networkidle");
-    await expect(startButton(page)).toHaveCount(0);
+  test("find first-visit choices again on the interests page", async ({ page }) => {
+    await chooseOnFirstVisit(page, "الفقه", "التزكية");
 
     await page.goto("/interests");
     await expect(interest(page, "الفقه")).toHaveAttribute("aria-pressed", "true");
     await expect(interest(page, "التزكية")).toHaveAttribute("aria-pressed", "true");
     await expect(interest(page, "النبوة")).toHaveAttribute("aria-pressed", "false");
-  });
-
-  test("can skip the first-visit choice, and it stays skipped", async ({ page }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: "تخطَّ الآن" }).click();
-    await expect(page.getByRole("button", { name: "تخطَّ الآن" })).toHaveCount(0);
-
-    await page.reload();
-    await page.waitForLoadState("networkidle");
-    await expect(page.getByRole("button", { name: "تخطَّ الآن" })).toHaveCount(0);
-  });
-
-  test("can't start without choosing, but can always skip", async ({ page }) => {
-    await page.goto("/");
-    await expect(startButton(page)).toBeDisabled();
-    await expect(page.getByRole("button", { name: "تخطَّ الآن" })).toBeEnabled();
-    await promptInterest(page, "الفقه").click();
-    await expect(startButton(page)).toBeEnabled();
   });
 
   test("can edit and reset interests, and resetting asks first", async ({ page }) => {
@@ -62,16 +44,16 @@ test.describe("guests", () => {
 
     await interest(page, "العقيدة").click();
     await save.click();
-    await expect(page.getByText("تم حفظ اهتماماتك.")).toBeVisible();
+    await expect(page.getByText("تم حفظ اختياراتك.")).toBeVisible();
 
     await page.reload();
     await expect(interest(page, "العقيدة")).toHaveAttribute("aria-pressed", "true");
 
-    await page.getByRole("button", { name: "إعادة ضبط الاهتمامات" }).click();
+    await page.getByRole("button", { name: "إعادة ضبط الاختيارات" }).click();
     await page.getByRole("button", { name: "إلغاء" }).click();
     await expect(interest(page, "العقيدة")).toHaveAttribute("aria-pressed", "true");
 
-    await page.getByRole("button", { name: "إعادة ضبط الاهتمامات" }).click();
+    await page.getByRole("button", { name: "إعادة ضبط الاختيارات" }).click();
     await page.getByRole("button", { name: "نعم، أعد الضبط" }).click();
     await expect(interest(page, "العقيدة")).toHaveAttribute("aria-pressed", "false");
 
@@ -80,7 +62,7 @@ test.describe("guests", () => {
   });
 
   test("survive damaged browser storage", async ({ page }) => {
-    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", '{"role":"SUPER_ADMIN"'));
+    await page.addInitScript(() => window.localStorage.setItem("preferences.v2", '{"role":"SUPER_ADMIN"'));
     await page.goto("/interests");
     await expect(interest(page, "الفقه")).toHaveAttribute("aria-pressed", "false");
   });
@@ -89,7 +71,7 @@ test.describe("guests", () => {
     await page.goto("/interests");
     await accountMenu(page).click();
     await expect(page.getByRole("menuitem", { name: "تسجيل الدخول" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "اهتماماتي" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "موضوعاتي وقنواتي" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "تسجيل الخروج" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "لوحة التحكم" })).toHaveCount(0);
 
@@ -152,32 +134,25 @@ test.describe("sign-in page", () => {
 
 test.describe("signed-in people", () => {
   test("keep what they chose as a guest, and it leaves the browser only after saving (§8.2)", async ({ page, context, baseURL }) => {
-    await page.goto("/");
-    await promptInterest(page, "الفقه").click();
-    await promptInterest(page, "السيرة النبوية").click();
-    await startButton(page).click();
-    await expect(startButton(page)).toHaveCount(0);
+    await chooseOnFirstVisit(page, "الفقه", "النبوة");
 
     const account = await createAccount();
     await signInBrowser(context, baseURL!, account.sessionToken);
 
     await page.goto("/interests");
     await expect(interest(page, "الفقه")).toHaveAttribute("aria-pressed", "true");
-    await expect(interest(page, "السيرة النبوية")).toHaveAttribute("aria-pressed", "true");
+    await expect(interest(page, "النبوة")).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByText("تُحفظ اختياراتك في حسابك")).toBeVisible();
 
-    await expect.poll(() => selectedCategoryTitles(account.id)).toEqual(["السيرة النبوية", "الفقه"].sort());
-    await expect.poll(() => page.evaluate(() => window.localStorage.getItem("preferences.v1"))).toBeNull();
+    await expect.poll(() => selectedTopicTitles(account.id)).toEqual(["النبوة", "الفقه"].sort());
+    await expect.poll(() => page.evaluate(() => window.localStorage.getItem("preferences.v2"))).toBeNull();
 
     const preference = await prisma.userPreference.findUniqueOrThrow({ where: { userId: account.id } });
     expect(preference.onboardingDoneAt).toBeInstanceOf(Date);
   });
 
   test("keep guest choices in the browser when the merge can't reach the server", async ({ page, context, baseURL }) => {
-    await page.goto("/");
-    await promptInterest(page, "الفقه").click();
-    await startButton(page).click();
-    await expect(startButton(page)).toHaveCount(0);
+    await chooseOnFirstVisit(page, "الفقه");
 
     const account = await createAccount();
     await signInBrowser(context, baseURL!, account.sessionToken);
@@ -185,12 +160,12 @@ test.describe("signed-in people", () => {
 
     await page.goto("/interests");
     await expect(page.getByRole("alert").filter({ hasText: "حدث خطأ غير متوقع" })).toBeVisible();
-    expect(await page.evaluate(() => window.localStorage.getItem("preferences.v1"))).toContain("completed");
+    expect(await page.evaluate(() => window.localStorage.getItem("preferences.v2"))).toContain("completed");
 
     await page.unroute("**/api/preferences/merge");
     await page.getByRole("button", { name: "إعادة المحاولة" }).click();
     await expect(interest(page, "الفقه")).toHaveAttribute("aria-pressed", "true");
-    await expect.poll(() => selectedCategoryTitles(account.id)).toEqual(["الفقه"]);
+    await expect.poll(() => selectedTopicTitles(account.id)).toEqual(["الفقه"]);
   });
 
   test("get the same interests on another device", async ({ page, context, baseURL, browser }) => {
@@ -200,7 +175,7 @@ test.describe("signed-in people", () => {
     await page.goto("/interests");
     await interest(page, "النبوة").click();
     await page.getByRole("button", { name: "حفظ التغييرات" }).click();
-    await expect(page.getByText("تم حفظ اهتماماتك.")).toBeVisible();
+    await expect(page.getByText("تم حفظ اختياراتك.")).toBeVisible();
 
     const otherDevice = await browser.newContext({ baseURL });
     await signInBrowser(otherDevice, baseURL!, account.sessionToken);
@@ -216,8 +191,8 @@ test.describe("signed-in people", () => {
     await signInBrowser(context, baseURL!, account.sessionToken);
 
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
-    await expect(startButton(page)).toHaveCount(0);
+    await expect(page.getByTestId("feed-card").first()).toBeVisible();
+    await expect(page.getByTestId("first-run")).toHaveCount(0);
   });
 
   test("see their account in the menu, and signing out really ends the session", async ({ page, context, baseURL }) => {
@@ -348,7 +323,7 @@ test.describe("dashboard access", () => {
 });
 
 test.describe("preferences API, called directly", () => {
-  const body = (categoryIds: string[]) => JSON.stringify({ categoryIds });
+  const body = (topicIds: string[]) => JSON.stringify({ topicIds, channelChoices: {} });
 
   test("refuses guests with a safe message", async ({ page, baseURL }) => {
     const headers = { Origin: baseURL!, "Content-Type": "application/json" };
@@ -383,17 +358,18 @@ test.describe("preferences API, called directly", () => {
   test("rejects bad input, and can't be pointed at someone else", async ({ page, context, baseURL }) => {
     const owner = await createAccount();
     const other = await createAccount();
-    const category = await prisma.category.findFirstOrThrow({ where: { isActive: true } });
+    const topic = await prisma.topic.findFirstOrThrow({ where: { status: "PUBLISHED", isArchived: false } });
     await signInBrowser(context, baseURL!, owner.sessionToken);
 
     const put = (data: string) => page.request.put("/api/preferences", { headers: { Origin: baseURL!, "Content-Type": "application/json" }, data });
 
     expect((await put("{not json")).status()).toBe(400);
-    expect((await put(JSON.stringify({ categoryIds: ["nope"] }))).status()).toBe(400);
-    expect((await put(JSON.stringify({ categoryIds: [category.id], userId: other.id }))).status()).toBe(400);
-    expect((await put(JSON.stringify({ categoryIds: [category.id], role: "ADMIN" }))).status()).toBe(400);
+    expect((await put(JSON.stringify({ topicIds: ["nope"], channelChoices: {} }))).status()).toBe(400);
+    expect((await put(JSON.stringify({ topicIds: [topic.id], channelChoices: { nope: true } }))).status()).toBe(400);
+    expect((await put(JSON.stringify({ topicIds: [topic.id], channelChoices: {}, userId: other.id }))).status()).toBe(400);
+    expect((await put(JSON.stringify({ topicIds: [topic.id], channelChoices: {}, role: "ADMIN" }))).status()).toBe(400);
 
-    expect(await selectedCategoryTitles(other.id)).toEqual([]);
+    expect(await selectedTopicTitles(other.id)).toEqual([]);
     expect((await prisma.user.findUniqueOrThrow({ where: { id: owner.id } })).role).toBe("USER");
   });
 
@@ -410,12 +386,13 @@ test.describe("preferences API, called directly", () => {
     expect(lastStatus).toBe(429);
   });
 
-  test("public categories need no sign-in and expose only what's public", async ({ request }) => {
-    const response = await request.get("/api/categories");
+  test("the public catalogue needs no sign-in and exposes only what's public", async ({ request }) => {
+    const response = await request.get("/api/topics");
     expect(response.status()).toBe(200);
-    const { categories } = await response.json();
-    expect(categories.length).toBeGreaterThanOrEqual(12);
-    expect(Object.keys(categories[0]).sort()).toEqual(["description", "icon", "id", "parentId", "slug", "title"]);
+    const { topics, channels } = await response.json();
+    expect(topics.length).toBeGreaterThanOrEqual(4);
+    expect(Object.keys(topics[0]).sort()).toEqual(["channelIds", "coverImage", "id", "introduction", "slug", "title"]);
+    expect(Object.keys(channels[0]).sort()).toEqual(["handle", "id", "thumbnailUrl", "title", "topicIds", "videoCount"]);
   });
 });
 
@@ -444,7 +421,7 @@ test.describe("layout and accessibility", () => {
 
   test("the first-visit prompt has no WCAG A or AA violations", async ({ page }) => {
     await page.goto("/");
-    await expect(startButton(page)).toBeVisible();
+    await expect(page.getByTestId("topic-tile").first()).toBeVisible();
     expect(await scan(page)).toEqual([]);
   });
 

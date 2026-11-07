@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { idListSchema, parseId, parseOptionalCursor, toCursorPage } from "@/features/content/common";
 import { videoPickerLabel, type PickerItem } from "@/features/relationships/picker.service";
 import { AppError } from "@/lib/errors";
@@ -21,17 +21,15 @@ const listSchema = z.strictObject({
   kind: z.enum(["SHORT", "LONG_FORM"]).optional(),
   status: z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]).optional(),
   review: z.enum(["NEEDS_REVIEW", "REVIEWED"]).optional(),
-  categoryId: objectIdSchema.optional(),
   cursor: z.string().optional(),
 });
 
 /** One definition, so "everything this filter matches" can't differ from what the list shows. */
-function videoFilterWhere({ query, kind, status, review, categoryId }: z.infer<typeof listSchema>): Prisma.VideoWhereInput {
+function videoFilterWhere({ query, kind, status, review }: z.infer<typeof listSchema>): Prisma.VideoWhereInput {
   const search = query ? normalizeArabicForSearch(query) : "";
   return {
     ...(search ? { titleSearch: { contains: search } } : {}),
     ...(kind ? { kind } : {}),
-    ...(categoryId ? { categoryId } : {}),
     ...(status === "ARCHIVED" ? { isArchived: true } : { isArchived: false, ...(status ? { status } : {}) }),
     // A date that was never set can be null or missing, and those differ in filters.
     ...(review === "NEEDS_REVIEW" ? { OR: [{ reviewedAt: null }, { reviewedAt: { isSet: false } }] } : review === "REVIEWED" ? { reviewedAt: { not: null } } : {}),
@@ -67,7 +65,7 @@ export async function listVideosForAdmin(actor: Actor | null, rawInput: unknown)
     orderBy: { id: "desc" },
     take: PAGE_SIZE + 1,
     ...(validCursor ? { cursor: { id: validCursor }, skip: 1 } : {}),
-    select: { id: true, title: true, kind: true, classification: true, status: true, isArchived: true, availability: true, reviewedAt: true, channelTitle: true, thumbnails: true, durationSeconds: true, categoryId: true, updatedAt: true },
+    select: { id: true, title: true, kind: true, classification: true, status: true, isArchived: true, availability: true, reviewedAt: true, channelTitle: true, thumbnails: true, durationSeconds: true, updatedAt: true },
   })]);
   const page = toCursorPage(rows, PAGE_SIZE);
   return { total, nextCursor: page.nextCursor, items: page.items.map(({ thumbnails, ...row }) => ({ ...row, thumbnailUrl: pickThumbnailUrl(thumbnails) })) };
@@ -111,7 +109,9 @@ export async function getVideoForEditing(actor: Actor | null, rawId: unknown) {
       }
     }
   }
-  return { ...video, thumbnailUrl: pickThumbnailUrl(video.thumbnails), ctaTarget };
+  // Read-only here: a video's topics come from its channel.
+  const topicLinks = video.channelId ? await prisma.channelTopic.findMany({ where: { channelId: video.channelId }, select: { topic: { select: { title: true } } } }) : [];
+  return { ...video, thumbnailUrl: pickThumbnailUrl(video.thumbnails), ctaTarget, topicTitles: topicLinks.map((link) => link.topic.title) };
 }
 
 export async function setVideoArchived(actor: Actor | null, rawId: unknown, isArchived: boolean) {
@@ -127,44 +127,25 @@ export async function setVideoArchived(actor: Actor | null, rawId: unknown, isAr
 }
 
 const bulkIds = z.array(objectIdSchema).min(1).max(MAX_BULK_ITEMS);
-const bulkAssignSchema = z.strictObject({
-  ids: bulkIds,
-  kind: z.enum(["SHORT", "LONG_FORM"]).optional(),
-  categoryId: objectIdSchema.optional(),
-  addTopicIds: idListSchema,
-});
+const bulkAssignSchema = z.strictObject({ ids: bulkIds, kind: z.enum(["SHORT", "LONG_FORM"]) });
 
-/** Adds topics without removing any, so a bulk action can't quietly undo someone's work. */
+/** A video's topics come from its channel, so choosing a kind is all there is to assign in bulk. */
 export async function bulkAssignVideos(actor: Actor | null, rawInput: unknown): Promise<{ changed: number }> {
   assertPermission(actor, "content.editAny");
   const parsed = bulkAssignSchema.safeParse(rawInput);
   if (!parsed.success) throw new AppError("VALIDATION");
-  const { kind, categoryId, addTopicIds } = parsed.data;
+  const { kind } = parsed.data;
   const ids = [...new Set(parsed.data.ids)];
-  const topicIds = [...new Set(addTopicIds)];
-  if (!kind && !categoryId && topicIds.length === 0) throw new AppError("VALIDATION");
 
-  return withTransaction(
-    async (tx) => {
-      if (categoryId && !(await tx.category.count({ where: { id: categoryId } }))) throw new AppError("VALIDATION");
-      if ((await tx.topic.count({ where: { id: { in: topicIds } } })) !== topicIds.length) throw new AppError("VALIDATION");
-      const videos = await tx.video.findMany({ where: { id: { in: ids } }, select: { id: true, topicIds: true } });
-      if (videos.length !== ids.length) throw new AppError("VALIDATION");
+  return withTransaction(async (tx) => {
+    if ((await tx.video.count({ where: { id: { in: ids } } })) !== ids.length) throw new AppError("VALIDATION");
 
-      // Assigning a kind is the human review that detection can't replace (§7.2).
-      if (kind || categoryId) await tx.video.updateMany({ where: { id: { in: ids } }, data: { ...(kind ? { kind, reviewedAt: new Date() } : {}), ...(categoryId ? { categoryId } : {}) } });
+    // Assigning a kind is the human review that detection can't replace (§7.2).
+    await tx.video.updateMany({ where: { id: { in: ids } }, data: { kind, reviewedAt: new Date() } });
 
-      for (const video of videos) {
-        const missing = topicIds.filter((topicId) => !video.topicIds.includes(topicId));
-        if (missing.length === 0) continue;
-        await tx.videoTopic.createMany({ data: missing.map((topicId) => ({ videoId: video.id, topicId })) });
-        await tx.video.update({ where: { id: video.id }, data: { topicIds: { push: missing } } });
-      }
-
-      await recordAudit(tx, actor, { action: "video.bulk_assign", entityType: "Video", metadata: { ids, kind: kind ?? null, categoryId: categoryId ?? null, addTopicIds: topicIds } });
-      return { changed: videos.length };
-    },
-  );
+    await recordAudit(tx, actor, { action: "video.bulk_assign", entityType: "Video", metadata: { ids, kind } });
+    return { changed: ids.length };
+  });
 }
 
 const bulkPublishSchema = z.strictObject({ ids: bulkIds, isPublished: z.boolean() });
@@ -199,31 +180,28 @@ export async function bulkPublishVideos(actor: Actor | null, rawInput: unknown):
   });
 }
 
-const bulkArticlesSchema = z.strictObject({ ids: bulkIds, categoryId: objectIdSchema.optional(), addTopicIds: idListSchema });
+const bulkArticlesSchema = z.strictObject({ ids: bulkIds, addTopicIds: idListSchema });
 
 /** The same bulk assignment for articles (§19.3). Needs permission to edit any of them. */
 export async function bulkAssignArticles(actor: Actor | null, rawInput: unknown): Promise<{ changed: number }> {
   assertPermission(actor, "content.editAny");
   const parsed = bulkArticlesSchema.safeParse(rawInput);
   if (!parsed.success) throw new AppError("VALIDATION");
-  const { categoryId } = parsed.data;
   const ids = [...new Set(parsed.data.ids)];
   const topicIds = [...new Set(parsed.data.addTopicIds)];
-  if (!categoryId && topicIds.length === 0) throw new AppError("VALIDATION");
+  if (topicIds.length === 0) throw new AppError("VALIDATION");
 
   return withTransaction(async (tx) => {
-    if (categoryId && !(await tx.category.count({ where: { id: categoryId } }))) throw new AppError("VALIDATION");
     if ((await tx.topic.count({ where: { id: { in: topicIds } } })) !== topicIds.length) throw new AppError("VALIDATION");
     if ((await tx.article.count({ where: { id: { in: ids } } })) !== ids.length) throw new AppError("VALIDATION");
 
-    if (categoryId) await tx.article.updateMany({ where: { id: { in: ids } }, data: { categoryId } });
     if (topicIds.length) {
       const existing = await tx.articleTopic.findMany({ where: { articleId: { in: ids }, topicId: { in: topicIds } }, select: { articleId: true, topicId: true } });
       const seen = new Set(existing.map((row) => `${row.articleId}:${row.topicId}`));
       const data = ids.flatMap((articleId) => topicIds.filter((topicId) => !seen.has(`${articleId}:${topicId}`)).map((topicId) => ({ articleId, topicId })));
       if (data.length) await tx.articleTopic.createMany({ data });
     }
-    await recordAudit(tx, actor, { action: "article.bulk_assign", entityType: "Article", metadata: { ids, categoryId: categoryId ?? null, addTopicIds: topicIds } });
+    await recordAudit(tx, actor, { action: "article.bulk_assign", entityType: "Article", metadata: { ids, addTopicIds: topicIds } });
     return { changed: ids.length };
   });
 }

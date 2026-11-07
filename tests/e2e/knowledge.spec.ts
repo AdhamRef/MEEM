@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { FEED_IMMERSIVE_OVERLAY } from "../../src/config/feed";
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import sharp from "sharp";
 import { createAccount, prisma, signInBrowser } from "./support/accounts";
+import { SKIPPED_FIRST_VISIT } from "./support/seed-feed";
 import { expect, test } from "./support/test";
 
 const unique = () => randomUUID().slice(0, 8);
@@ -558,14 +560,21 @@ test.describe("reading an article", () => {
     const article = await seedArticle();
     const short = await seedShort({ cta: { type: "INTERNAL_ARTICLE", targetId: article.id } });
     await page.goto(`/videos/${short.id}`);
-    await page.getByTestId("video-cta").click();
+    const cta = page.getByTestId("video-cta");
+    await expect(cta).toBeVisible();
+    // On a phone a stuck Short leaves only a narrow band below it, so this scrolls as a person would.
+    await cta.evaluate((element) => {
+      const frameBottom = document.querySelector("[data-testid=\"video-frame\"]")!.getBoundingClientRect().bottom;
+      window.scrollBy({ top: element.getBoundingClientRect().top - frameBottom - 8, behavior: "instant" });
+    });
+    await cta.click();
     await expect(page).toHaveURL(new RegExp(`/articles/${article.slug}$`));
     await expect(page.getByTestId("article-page")).toBeVisible();
   });
 });
 
 test.describe("opening a related Short from an article", () => {
-  test("opens over the article with one player, nothing in front of it, and returns to the same place", async ({ page }) => {
+  test("opens over the article with one player, and returns to the same place", async ({ page }) => {
     const short = await seedShort();
     const article = await seedArticle();
     await prisma.articleVideo.create({ data: { articleId: article.id, videoId: short.id } });
@@ -587,7 +596,9 @@ test.describe("opening a related Short from an article", () => {
       const points = [0.1, 0.5, 0.9].flatMap((x) => [0.1, 0.5, 0.9].map((y) => [box.left + box.width * x, box.top + box.height * y] as const));
       return points.filter(([x, y]) => document.elementFromPoint(x, y) !== element).length;
     });
-    expect(covered).toBe(0);
+    // Our controls sit in front of video pages only by the owner's decision of 2026-11-06, under this
+    // switch. Turning it off for the compliance audit makes this strict again by itself.
+    if (!FEED_IMMERSIVE_OVERLAY) expect(covered).toBe(0);
 
     const box = await frame.boundingBox();
     expect(box!.width).toBeGreaterThanOrEqual(200);
@@ -613,7 +624,7 @@ test.describe("opening a related Short from an article", () => {
 
   test("opening the address directly shows the full feed, with no modal", async ({ page }) => {
     const short = await seedShort();
-    await page.addInitScript(() => window.localStorage.setItem("preferences.v1", JSON.stringify({ version: 1, selectedCategoryIds: [], onboarding: "skipped" })));
+    await page.addInitScript(() => window.localStorage.setItem("preferences.v2", JSON.stringify({ version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "skipped" })));
     const response = await page.goto(`/shorts/${short.id}`);
     expect(response?.status()).toBe(200);
     await expect(page.getByTestId("video-modal")).toHaveCount(0);
@@ -662,21 +673,17 @@ test.describe("topic pages", () => {
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(related.title);
   });
 
-  test("the destination in the navigation works, and categories filter the list", async ({ page }) => {
-    const category = await prisma.category.findFirstOrThrow({ where: { slug: "الفقه" } });
-    const inside = await seedTopic({ categoryId: category.id });
-    const outside = await seedTopic();
+  test("the destination in the navigation works, and lists published topics but not drafts", async ({ page }) => {
+    const published = await seedTopic();
+    const draft = await seedTopic({ status: "DRAFT" });
 
+    await page.addInitScript((value) => window.localStorage.setItem("preferences.v2", value), SKIPPED_FIRST_VISIT);
     await page.goto("/");
     await page.locator('nav:visible a[href="/topics"]').first().click();
     await expect(page).toHaveURL(/\/topics$/);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("الموضوعات");
-    await expect(page.getByTestId("topic-card").filter({ hasText: outside.title })).toHaveCount(1);
-
-    await page.getByTestId("topic-categories").getByRole("link", { name: category.title }).click();
-    await expect(page).toHaveURL(/category=/);
-    await expect(page.getByTestId("topic-card").filter({ hasText: inside.title })).toHaveCount(1);
-    await expect(page.getByTestId("topic-card").filter({ hasText: outside.title })).toHaveCount(0);
+    await expect(page.getByTestId("topic-card").filter({ hasText: published.title })).toHaveCount(1);
+    await expect(page.getByTestId("topic-card").filter({ hasText: draft.title })).toHaveCount(0);
   });
 });
 

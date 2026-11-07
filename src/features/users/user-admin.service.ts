@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { UserRole, type Prisma } from "@prisma/client";
 import { recordAudit } from "@/features/admin/audit";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { AppError } from "@/lib/errors";
 import { assertPermission, GRANTABLE_PERMISSIONS, type Actor } from "@/lib/permissions";
 import { withTransaction } from "@/lib/prisma/transaction";

@@ -2,6 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import type { ChannelChoices } from "@/features/preferences/channel-choices";
 import {
   clearGuestPreferences,
   hasGuestPreferences,
@@ -17,11 +18,12 @@ type LoadStatus = "loading" | "ready" | "error";
 interface PreferencesContextValue {
   status: LoadStatus;
   isGuest: boolean;
-  selectedCategoryIds: string[];
+  selectedTopicIds: string[];
+  channelChoices: Record<string, boolean>;
   onboarding: OnboardingState;
   /** These reject on failure, so callers only report success when it really happened. */
-  saveInterests: (categoryIds: string[]) => Promise<void>;
-  completeOnboarding: (categoryIds: string[]) => Promise<void>;
+  saveInterests: (topicIds: string[], channelChoices: ChannelChoices) => Promise<void>;
+  completeOnboarding: (topicIds: string[], channelChoices: ChannelChoices) => Promise<void>;
   skipOnboarding: () => Promise<void>;
   resetInterests: () => Promise<void>;
   reload: () => void;
@@ -46,7 +48,7 @@ async function requestPreferences(path: string, method: string, body?: unknown):
 }
 
 /**
- * The one source of interests for the whole public site. Guests use browser storage, and
+ * The one source of choices for the whole public site. Guests use browser storage, and
  * signed-in people use their account. What a guest chose moves into the account on the
  * first load after sign-in, and only leaves the browser once the server has it (§8.2).
  */
@@ -66,7 +68,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const isGuest = sessionStatus !== "authenticated";
 
   const [status, setStatus] = useState<LoadStatus>("loading");
-  const [view, setView] = useState<PreferencesView>({ selectedCategoryIds: [], onboarding: "pending" });
+  const [view, setView] = useState<PreferencesView>({ selectedTopicIds: [], channelChoices: {}, onboarding: "pending" });
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -78,7 +80,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     load.then(
       (loaded) => {
         if (!isCurrent) return;
-        setView({ selectedCategoryIds: loaded.selectedCategoryIds, onboarding: loaded.onboarding });
+        setView({ selectedTopicIds: loaded.selectedTopicIds, channelChoices: loaded.channelChoices, onboarding: loaded.onboarding });
         setStatus("ready");
       },
       () => {
@@ -92,17 +94,26 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   }, [sessionStatus, attempt]);
 
   const writeGuest = useCallback((next: PreferencesView) => {
-    const saved = writeGuestPreferences(window.localStorage, { version: 1, ...next });
+    const saved = writeGuestPreferences(window.localStorage, { version: 2, ...next });
     if (!saved) throw new Error("Browser storage is unavailable");
     setView(next);
   }, []);
 
+  /**
+   * First-visit choices still apply for this visit if the browser refuses to store them, such as
+   * in some private windows. Refusing here would stop someone from using the site at all.
+   */
+  const writeGuestOnboarding = useCallback((next: PreferencesView) => {
+    writeGuestPreferences(window.localStorage, { version: 2, ...next });
+    setView(next);
+  }, []);
+
   const saveInterests = useCallback(
-    async (categoryIds: string[]) => {
+    async (topicIds: string[], channelChoices: ChannelChoices) => {
       if (isGuest) {
-        writeGuest({ ...view, selectedCategoryIds: categoryIds });
+        writeGuest({ ...view, selectedTopicIds: topicIds, channelChoices: { ...channelChoices } });
       } else {
-        setView(await requestPreferences("/api/preferences", "PUT", { categoryIds }));
+        setView(await requestPreferences("/api/preferences", "PUT", { topicIds, channelChoices }));
       }
     },
     [isGuest, view, writeGuest],
@@ -111,28 +122,28 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   // One action rather than a save followed by a finish, because a guest's second write would
   // otherwise start from the state as it was before the first, and undo it.
   const completeOnboarding = useCallback(
-    async (categoryIds: string[]) => {
+    async (topicIds: string[], channelChoices: ChannelChoices) => {
       if (isGuest) {
-        writeGuest({ selectedCategoryIds: categoryIds, onboarding: "completed" });
+        writeGuestOnboarding({ selectedTopicIds: topicIds, channelChoices: { ...channelChoices }, onboarding: "completed" });
       } else {
-        await requestPreferences("/api/preferences", "PUT", { categoryIds });
+        await requestPreferences("/api/preferences", "PUT", { topicIds, channelChoices });
         setView(await requestPreferences("/api/preferences/onboarding", "POST", { outcome: "completed" }));
       }
     },
-    [isGuest, writeGuest],
+    [isGuest, writeGuestOnboarding],
   );
 
   const skipOnboarding = useCallback(async () => {
     if (isGuest) {
-      writeGuest({ ...view, onboarding: mergeOnboardingState(view.onboarding, "skipped") });
+      writeGuestOnboarding({ ...view, onboarding: mergeOnboardingState(view.onboarding, "skipped") });
     } else {
       setView(await requestPreferences("/api/preferences/onboarding", "POST", { outcome: "skipped" }));
     }
-  }, [isGuest, view, writeGuest]);
+  }, [isGuest, view, writeGuestOnboarding]);
 
   const resetInterests = useCallback(async () => {
     if (isGuest) {
-      writeGuest({ ...view, selectedCategoryIds: [] });
+      writeGuest({ ...view, selectedTopicIds: [], channelChoices: {} });
     } else {
       setView(await requestPreferences("/api/preferences", "DELETE"));
     }

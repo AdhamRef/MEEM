@@ -35,7 +35,7 @@ export async function signInBrowser(context: BrowserContext, baseURL: string, se
   await context.addCookies([{ name: "next-auth.session-token", value: sessionToken, url: baseURL, httpOnly: true, sameSite: "Lax" }]);
 }
 
-export async function selectedCategoryTitles(userId: string): Promise<string[]> {
-  const interests = await prisma.userInterest.findMany({ where: { userId, isSelected: true }, include: { category: { select: { title: true } } } });
-  return interests.map((interest) => interest.category.title).sort();
+export async function selectedTopicTitles(userId: string): Promise<string[]> {
+  const interests = await prisma.userInterest.findMany({ where: { userId, isSelected: true }, include: { topic: { select: { title: true } } } });
+  return interests.map((interest) => interest.topic.title).sort();
 }

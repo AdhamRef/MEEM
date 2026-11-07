@@ -25,16 +25,15 @@ const CTA_TARGETS: Record<string, PickerType | null> = {
 interface VideoEditorProps {
   id: string;
   canEdit: boolean;
-  categories: { id: string; title: string }[];
-  initial: { kind: "SHORT" | "LONG_FORM"; categoryId: string | null; ctaType: string; ctaLabel: string; ctaUrl: string; ctaTarget: PickerItem | null };
+  topicTitles: string[];
+  initial: { kind: "SHORT" | "LONG_FORM"; ctaType: string; ctaLabel: string; ctaUrl: string; ctaTarget: PickerItem | null };
   onSave: (input: unknown) => Promise<ActionResult<undefined>>;
 }
 
-/** YouTube's own details are read-only. Only what editors add is here: kind, category, and CTA. */
-export function VideoEditor({ id, canEdit, categories, initial, onSave }: VideoEditorProps) {
+/** YouTube's own details are read-only. Only what editors add is here: kind and CTA. */
+export function VideoEditor({ id, canEdit, topicTitles, initial, onSave }: VideoEditorProps) {
   const router = useRouter();
   const [kind, setKind] = useState(initial.kind);
-  const [categoryId, setCategoryId] = useState(initial.categoryId ?? "");
   const [ctaType, setCtaType] = useState(initial.ctaType);
   const [ctaLabel, setCtaLabel] = useState(initial.ctaLabel);
   const [ctaUrl, setCtaUrl] = useState(initial.ctaUrl);
@@ -51,7 +50,7 @@ export function VideoEditor({ id, canEdit, categories, initial, onSave }: VideoE
     setMessage(null);
     const label = ctaLabel.trim() || null;
     const cta = !ctaType ? null : isExternal ? { type: ctaType, label, externalUrl: ctaUrl.trim() } : { type: ctaType, label, targetId: ctaTarget[0]?.id };
-    const result = await onSave({ kind, categoryId: categoryId || null, cta });
+    const result = await onSave({ kind, cta });
     setIsBusy(false);
     setMessage(result.ok ? { text: strings.adminContent.saved, isError: false } : { text: result.message, isError: true });
     if (result.ok) router.refresh();
@@ -67,17 +66,11 @@ export function VideoEditor({ id, canEdit, categories, initial, onSave }: VideoE
             <option value="LONG_FORM">{strings.content.longVideo}</option>
           </select>
         </label>
-        <label className="space-y-1.5 text-sm font-medium">
-          {strings.adminContent.category}
-          <select value={categoryId} disabled={!canEdit} onChange={(event) => setCategoryId(event.target.value)} className={selectClass} data-testid="video-category">
-            <option value="">{strings.adminContent.noCategory}</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.title}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="space-y-1.5 text-sm" data-testid="video-topics">
+          <p className="font-medium">{strings.admin.topics}</p>
+          <p className="text-text-secondary">{topicTitles.length ? topicTitles.join("، ") : strings.importer.channelNoTopics}</p>
+          <p className="text-xs text-text-secondary">{v.topicsFromChannel}</p>
+        </div>
       </div>
       <p className="text-xs text-text-secondary">{v.reviewHint}</p>
 

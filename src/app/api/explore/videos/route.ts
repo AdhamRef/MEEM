@@ -10,7 +10,7 @@ export const GET = apiHandler(async (request: NextRequest) => {
   const params = request.nextUrl.searchParams;
   const page = await listExploreVideos({
     kind: params.get("kind"),
-    categoryId: params.get("categoryId"),
+    topicId: params.get("topicId"),
     cursor: params.get("cursor"),
     size: Number(params.get("size")),
   });

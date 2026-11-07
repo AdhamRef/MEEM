@@ -15,8 +15,8 @@ export interface VideoCard {
   aspectRatio: number | null;
   /** When YouTube says it was published. Used for structured data. */
   uploadedAt: string | null;
-  category: { id: string; title: string; slug: string } | null;
-  topics: string[];
+  /** Its channel's published topics. */
+  topics: { id: string; title: string; slug: string }[];
   cta: VideoCardCta | null;
   /** Only when statistics are enabled and YouTube returned one. Never filled in. */
   viewCount: number | null;

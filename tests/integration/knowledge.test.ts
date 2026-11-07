@@ -25,7 +25,7 @@ import { AppError } from "@/lib/errors";
 import type { Actor } from "@/lib/permissions";
 import { readLocalObject } from "@/lib/storage";
 import { clearDatabase, createTestClient } from "./helpers";
-import { createActor } from "./phase3-helpers";
+import { createActor, createChannel } from "./phase3-helpers";
 
 process.env.APP_URL = "http://localhost:3000";
 
@@ -93,17 +93,32 @@ beforeEach(async () => {
 });
 
 describe("links", () => {
-  it("adds a video to a topic in the join and the feed copy together, and removes it from both", async () => {
+  it("adds a channel to a topic, which brings its videos, and removes it again", async () => {
     const owner = await topic();
-    const clip = await video();
+    const channel = await createChannel(prisma);
+    const clip = await video({ channelId: channel.id });
 
-    await addLink(editor, { kind: "topic.video", ownerId: owner.id, targetId: clip.id });
-    expect((await prisma.video.findUniqueOrThrow({ where: { id: clip.id } })).topicIds).toEqual([owner.id]);
-    expect(await prisma.videoTopic.count({ where: { topicId: owner.id, videoId: clip.id } })).toBe(1);
+    await addLink(editor, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id });
+    expect(await prisma.channelTopic.count({ where: { topicId: owner.id, channelId: channel.id } })).toBe(1);
+    expect((await getTopicSections(owner.id, null)).shorts.items.map((row) => row.id)).toEqual([clip.id]);
 
-    await removeLink(editor, { kind: "topic.video", ownerId: owner.id, targetId: clip.id });
-    expect((await prisma.video.findUniqueOrThrow({ where: { id: clip.id } })).topicIds).toEqual([]);
-    expect(await prisma.videoTopic.count({ where: { topicId: owner.id } })).toBe(0);
+    await removeLink(editor, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id });
+    expect(await prisma.channelTopic.count({ where: { topicId: owner.id } })).toBe(0);
+    expect((await getTopicSections(owner.id, null)).shorts.items).toEqual([]);
+  });
+
+  it("is the same link from the channel's side, shown on both", async () => {
+    const owner = await topic();
+    const channel = await createChannel(prisma);
+
+    await addLink(editor, { kind: "channel.topic", ownerId: channel.id, targetId: owner.id });
+    await addLink(editor, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id });
+    expect(await prisma.channelTopic.count()).toBe(1);
+    expect((await listLinks(editor, { kind: "channel.topic", ownerId: channel.id })).items.map((row) => row.id)).toEqual([owner.id]);
+    expect((await listLinks(editor, { kind: "topic.channel", ownerId: owner.id })).items.map((row) => row.id)).toEqual([channel.id]);
+
+    await removeLink(editor, { kind: "channel.topic", ownerId: channel.id, targetId: owner.id });
+    expect(await prisma.channelTopic.count()).toBe(0);
   });
 
   it("does the same for libraries", async () => {
@@ -117,24 +132,23 @@ describe("links", () => {
     expect((await prisma.video.findUniqueOrThrow({ where: { id: clip.id } })).libraryIds).toEqual([]);
   });
 
-  it("removing from one topic leaves the video's other topics alone", async () => {
+  it("removing from one topic leaves the channel's other topics alone", async () => {
     const [first, second] = [await topic(), await topic()];
-    const clip = await video();
-    await addLink(editor, { kind: "topic.video", ownerId: first.id, targetId: clip.id });
-    await addLink(editor, { kind: "topic.video", ownerId: second.id, targetId: clip.id });
+    const channel = await createChannel(prisma);
+    await addLink(editor, { kind: "topic.channel", ownerId: first.id, targetId: channel.id });
+    await addLink(editor, { kind: "topic.channel", ownerId: second.id, targetId: channel.id });
 
-    await removeLink(editor, { kind: "topic.video", ownerId: first.id, targetId: clip.id });
-    expect((await prisma.video.findUniqueOrThrow({ where: { id: clip.id } })).topicIds).toEqual([second.id]);
+    await removeLink(editor, { kind: "topic.channel", ownerId: first.id, targetId: channel.id });
+    expect((await prisma.channelTopic.findMany({ where: { channelId: channel.id } })).map((row) => row.topicId)).toEqual([second.id]);
   });
 
-  it("treats adding twice as done, with no duplicate in the join or the copy", async () => {
+  it("treats adding twice as done, with no duplicate in the join", async () => {
     const owner = await topic();
-    const clip = await video();
-    await addLink(editor, { kind: "topic.video", ownerId: owner.id, targetId: clip.id });
-    await addLink(editor, { kind: "topic.video", ownerId: owner.id, targetId: clip.id });
+    const channel = await createChannel(prisma);
+    await addLink(editor, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id });
+    await addLink(editor, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id });
 
-    expect(await prisma.videoTopic.count({ where: { topicId: owner.id } })).toBe(1);
-    expect((await prisma.video.findUniqueOrThrow({ where: { id: clip.id } })).topicIds).toEqual([owner.id]);
+    expect(await prisma.channelTopic.count({ where: { topicId: owner.id } })).toBe(1);
   });
 
   it("stores a topic relation once, whichever side adds it, and shows it on both", async () => {
@@ -167,46 +181,48 @@ describe("links", () => {
   it("rejects missing items and bad input", async () => {
     const owner = await topic();
     const missing = "507f1f77bcf86cd799439011";
-    expect(await codeOf(addLink(editor, { kind: "topic.video", ownerId: owner.id, targetId: missing }))).toBe("VALIDATION");
-    expect(await codeOf(addLink(editor, { kind: "topic.video", ownerId: missing, targetId: (await video()).id }))).toBe("NOT_FOUND");
+    expect(await codeOf(addLink(editor, { kind: "topic.channel", ownerId: owner.id, targetId: missing }))).toBe("VALIDATION");
+    expect(await codeOf(addLink(editor, { kind: "topic.channel", ownerId: missing, targetId: (await createChannel(prisma)).id }))).toBe("NOT_FOUND");
     expect(await codeOf(addLink(editor, { kind: "made.up", ownerId: owner.id, targetId: missing }))).toBe("VALIDATION");
-    expect(await codeOf(addLink(editor, { kind: "topic.video", ownerId: "$ne", targetId: missing }))).toBe("VALIDATION");
+    expect(await codeOf(addLink(editor, { kind: "topic.channel", ownerId: "$ne", targetId: missing }))).toBe("VALIDATION");
   });
 
   it("enforces permissions on the server for every direction", async () => {
     const owner = await topic();
     const shelf = await library();
     const clip = await video();
+    const channel = await createChannel(prisma);
     const contributor = await createActor(prisma, "CONTRIBUTOR");
     const reader = await createActor(prisma, "USER");
 
     for (const actor of [contributor, reader]) {
-      expect(await codeOf(addLink(actor, { kind: "topic.video", ownerId: owner.id, targetId: clip.id }))).toBe("FORBIDDEN");
+      expect(await codeOf(addLink(actor, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id }))).toBe("FORBIDDEN");
+      expect(await codeOf(addLink(actor, { kind: "channel.topic", ownerId: channel.id, targetId: owner.id }))).toBe("FORBIDDEN");
       expect(await codeOf(addLink(actor, { kind: "library.video", ownerId: shelf.id, targetId: clip.id }))).toBe("FORBIDDEN");
-      expect(await codeOf(removeLink(actor, { kind: "topic.video", ownerId: owner.id, targetId: clip.id }))).toBe("FORBIDDEN");
+      expect(await codeOf(removeLink(actor, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id }))).toBe("FORBIDDEN");
     }
-    expect(await codeOf(addLink(null, { kind: "topic.video", ownerId: owner.id, targetId: clip.id }))).toBe("UNAUTHENTICATED");
+    expect(await codeOf(addLink(null, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id }))).toBe("UNAUTHENTICATED");
 
     const granted = await createActor(prisma, "CONTRIBUTOR", ["topics.manage"]);
-    expect(await codeOf(addLink(granted, { kind: "topic.video", ownerId: owner.id, targetId: clip.id }))).toBeUndefined();
+    expect(await codeOf(addLink(granted, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id }))).toBeUndefined();
   });
 
   it("audits every change", async () => {
     const owner = await topic();
-    const clip = await video();
-    await addLink(editor, { kind: "topic.video", ownerId: owner.id, targetId: clip.id });
-    await removeLink(editor, { kind: "topic.video", ownerId: owner.id, targetId: clip.id });
+    const channel = await createChannel(prisma);
+    await addLink(editor, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id });
+    await removeLink(editor, { kind: "topic.channel", ownerId: owner.id, targetId: channel.id });
     const actions = (await prisma.auditLog.findMany({ where: { entityId: owner.id }, orderBy: { createdAt: "asc" } })).map((row) => row.action);
     expect(actions).toEqual(["link.add", "link.remove"]);
   });
 
   it("pages through long lists without repeats", async () => {
     const owner = await topic();
-    for (let index = 0; index < 35; index += 1) await addLink(editor, { kind: "topic.video", ownerId: owner.id, targetId: (await video()).id });
+    for (let index = 0; index < 35; index += 1) await addLink(editor, { kind: "topic.channel", ownerId: owner.id, targetId: (await createChannel(prisma)).id });
 
-    const first = await listLinks(editor, { kind: "topic.video", ownerId: owner.id });
+    const first = await listLinks(editor, { kind: "topic.channel", ownerId: owner.id });
     expect(first.items).toHaveLength(30);
-    const second = await listLinks(editor, { kind: "topic.video", ownerId: owner.id, cursor: first.nextCursor! });
+    const second = await listLinks(editor, { kind: "topic.channel", ownerId: owner.id, cursor: first.nextCursor! });
     expect(second.items).toHaveLength(5);
     expect(second.nextCursor).toBeNull();
     expect(new Set([...first.items, ...second.items].map((row) => row.id)).size).toBe(35);
@@ -217,6 +233,7 @@ describe("topic pages", () => {
   it("returns nothing for sections with no content, so the page can hide them", async () => {
     const page = await topic();
     const sections = await getTopicSections(page.id, null);
+    expect(sections.channels).toEqual([]);
     expect(sections.shorts.items).toEqual([]);
     expect(sections.videos.items).toEqual([]);
     expect(sections.articles.items).toEqual([]);
@@ -230,11 +247,18 @@ describe("topic pages", () => {
 
   it("shows each kind of content in its own section, and only what's public", async () => {
     const page = await topic();
-    const short = await video();
-    const longVideo = await video({ kind: "LONG_FORM" });
-    const hidden = await video({ status: "DRAFT" });
-    const withdrawn = await video({ availability: "UNKNOWN" });
-    for (const clip of [short, longVideo, hidden, withdrawn]) await addLink(editor, { kind: "topic.video", ownerId: page.id, targetId: clip.id });
+    const channel = await createChannel(prisma);
+    await addLink(editor, { kind: "topic.channel", ownerId: page.id, targetId: channel.id });
+    const short = await video({ channelId: channel.id });
+    const longVideo = await video({ channelId: channel.id, kind: "LONG_FORM" });
+    await video({ channelId: channel.id, status: "DRAFT" });
+    await video({ channelId: channel.id, availability: "UNKNOWN" });
+    // Not in the topic, whether from another channel or none.
+    await video({ channelId: (await createChannel(prisma)).id });
+    await video();
+    // A channel whose YouTube data was withdrawn has no name to show, so it and its videos stay off the page.
+    const withdrawnChannel = await createChannel(prisma, [page.id], { title: "" });
+    await video({ channelId: withdrawnChannel.id });
 
     const live = await article();
     const draft = await article({ status: "DRAFT" });
@@ -256,6 +280,7 @@ describe("topic pages", () => {
     await addLink(editor, { kind: "topic.resource", ownerId: page.id, targetId: source.id });
 
     const sections = await getTopicSections(page.id, null);
+    expect(sections.channels.map((row) => row.id)).toEqual([channel.id]);
     expect(sections.shorts.items.map((row) => row.id)).toEqual([short.id]);
     expect(sections.videos.items.map((row) => row.id)).toEqual([longVideo.id]);
     expect(sections.articles.items.map((row) => row.id)).toEqual([live.id]);
@@ -291,15 +316,12 @@ describe("topic pages", () => {
     expect((await getTopicSections(page.id, null, { articles: "../../etc" })).articles.items).toHaveLength(1);
   });
 
-  it("lists public topics only, and filters by category", async () => {
-    const category = await prisma.category.create({ data: { title: "الفقه", slug: "fiqh" } });
-    const inCategory = await topic({ categoryId: category.id });
-    const other = await topic();
+  it("lists public topics only", async () => {
+    const [first, second] = [await topic(), await topic()];
     await topic({ status: "DRAFT" });
     await topic({ isArchived: true });
 
-    expect((await listPublicTopics()).items.map((row) => row.id).sort()).toEqual([inCategory.id, other.id].sort());
-    expect((await listPublicTopics({ categoryId: category.id })).items.map((row) => row.id)).toEqual([inCategory.id]);
+    expect((await listPublicTopics()).items.map((row) => row.id).sort()).toEqual([first.id, second.id].sort());
   });
 
   it("makes a clear slug from a title, numbers a clash, and locks it once published", async () => {
@@ -322,10 +344,11 @@ describe("deleting a topic", () => {
     const page = await topic();
     const child = await topic({ parentId: page.id });
     const related = await topic();
-    const clip = await video();
+    const channel = await createChannel(prisma);
+    const clip = await video({ channelId: channel.id });
     const keptTopic = await topic();
-    await addLink(editor, { kind: "topic.video", ownerId: page.id, targetId: clip.id });
-    await addLink(editor, { kind: "topic.video", ownerId: keptTopic.id, targetId: clip.id });
+    await addLink(editor, { kind: "topic.channel", ownerId: page.id, targetId: channel.id });
+    await addLink(editor, { kind: "topic.channel", ownerId: keptTopic.id, targetId: channel.id });
     await addLink(editor, { kind: "topic.related", ownerId: page.id, targetId: related.id });
     await prisma.video.update({ where: { id: clip.id }, data: { cta: { type: "TOPIC", targetId: page.id } } });
 
@@ -335,10 +358,11 @@ describe("deleting a topic", () => {
     expect(await prisma.topic.count({ where: { id: page.id } })).toBe(0);
     expect((await prisma.topic.findUniqueOrThrow({ where: { id: child.id } })).parentId).toBeNull();
     expect(await prisma.topicRelation.count()).toBe(0);
-    expect(await prisma.videoTopic.count({ where: { topicId: page.id } })).toBe(0);
+    expect(await prisma.channelTopic.count({ where: { topicId: page.id } })).toBe(0);
+    expect((await prisma.channelTopic.findMany({ where: { channelId: channel.id } })).map((row) => row.topicId)).toEqual([keptTopic.id]);
 
     const stored = await prisma.video.findUniqueOrThrow({ where: { id: clip.id } });
-    expect(stored.topicIds).toEqual([keptTopic.id]);
+    expect(stored.channelId).toBe(channel.id);
     expect(stored.cta).toBeNull();
     expect(await prisma.auditLog.count({ where: { action: "topic.delete", entityId: page.id } })).toBe(1);
   });

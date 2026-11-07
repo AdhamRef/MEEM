@@ -1,6 +1,6 @@
 import type { ContentType } from "@prisma/client";
 import { z } from "zod";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { cursorArgs, parseOptionalCursor, publicContentFilter, toCursorPage, type CursorPage } from "@/features/content/common";
 import { contentKey, resolvePublicContent, type ResolvedContent } from "@/features/content/resolve";
 import { publicPlaylistFilter } from "@/features/playlists/playlist-filters";

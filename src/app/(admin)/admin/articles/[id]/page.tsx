@@ -9,7 +9,6 @@ import { slugHref } from "@/components/knowledge/content-cards";
 import { strings } from "@/config/strings.ar";
 import { getArticleForEditing } from "@/features/articles/articles.service";
 import { listReviewNotes } from "@/features/articles/review-notes.service";
-import { listActiveCategories } from "@/features/categories/categories.service";
 import { checkPageAccess } from "@/lib/auth/guards";
 import { ArticleBody } from "@/lib/content/content-renderer";
 import { sanitizeDocument } from "@/lib/content/document";
@@ -48,7 +47,7 @@ export default async function EditArticlePage({ params }: { params: Promise<{ id
   if (!loaded.article) return <StateMessage icon={FileX} title={strings.errors.notFound} />;
   const { article } = loaded;
 
-  const [categories, notes] = await Promise.all([listActiveCategories(), listReviewNotes(actor, id)]);
+  const notes = await listReviewNotes(actor, id);
 
   const actions = {
     status: article.status,
@@ -78,7 +77,6 @@ export default async function EditArticlePage({ params }: { params: Promise<{ id
             id,
             status: article.status,
             canAssign: hasPermission(actor, "content.editAny"),
-            categories: categories.map((category) => ({ id: category.id, title: category.title })),
             onSave: updateArticleAction.bind(null, id),
             initial: { ...article, body: sanitizeDocument(article.body) },
           }}

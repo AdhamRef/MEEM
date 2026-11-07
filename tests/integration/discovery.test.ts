@@ -24,7 +24,7 @@ import type { Actor } from "@/lib/permissions";
 import { ensureMongoIndexes } from "@/lib/prisma/ensure-indexes";
 import { buildSearchText, normalizeArabicForSearch } from "@/lib/search/normalize";
 import { clearDatabase, createTestClient } from "./helpers";
-import { createActor } from "./phase3-helpers";
+import { createActor, createChannel } from "./phase3-helpers";
 
 process.env.APP_URL = "http://localhost:3000";
 
@@ -95,8 +95,6 @@ async function seedResource(title: string, overrides: Record<string, unknown> = 
   const id = next();
   return prisma.externalResource.create({ data: { title, slug: `resource-${id}`, sourceName: "مصدر", url: `https://example.com/${id}`, ...live, ...search(title), ...overrides } });
 }
-
-const seedCategory = (title: string, isActive = true) => prisma.category.create({ data: { title, slug: `category-${next()}`, isActive } });
 
 const titlesOf = (group: SearchGroup | undefined) => (group?.items ?? []).map((item) => summarizeContent(item).title);
 function groupOf(result: SearchResult, type: SearchType): SearchGroup | undefined {
@@ -186,8 +184,7 @@ describe("search across all content types", () => {
 
   it("finds content through a topic's name, even if it doesn't repeat it", async () => {
     const topic = await seedTopic("الميراث");
-    const video = await seedVideo("مقطع بلا الكلمة", { topicIds: [topic.id] });
-    await prisma.videoTopic.create({ data: { videoId: video.id, topicId: topic.id } });
+    await seedVideo("مقطع بلا الكلمة", { channelId: (await createChannel(prisma, [topic.id])).id });
     const article = await seedArticle("مقال بلا الكلمة");
     await prisma.articleTopic.create({ data: { articleId: article.id, topicId: topic.id } });
     const playlist = await seedPlaylist("قائمة بلا الكلمة");
@@ -201,36 +198,61 @@ describe("search across all content types", () => {
 
   it("doesn't pull in content of a topic that only mentions the word in passing", async () => {
     const topic = await seedTopic("السيرة", { introduction: "فيها ذكر الميراث" });
-    await seedVideo("مقطع السيرة", { topicIds: [topic.id] });
+    await seedVideo("مقطع السيرة", { channelId: (await createChannel(prisma, [topic.id])).id });
     expect(await titlesFound("الميراث", "SHORT")).toEqual([]);
     expect(await titlesFound("الميراث", "TOPIC")).toEqual(["السيرة"]);
   });
 
-  it("finds content through a category's name, with direct matches first", async () => {
-    const category = await seedCategory("الفقه");
-    await seedArticle("مقال في الطهارة", { categoryId: category.id });
+  it("finds content through a topic's name, with direct matches first", async () => {
+    const topic = await seedTopic("الفقه");
+    const linked = await seedArticle("مقال في الطهارة");
+    await prisma.articleTopic.create({ data: { articleId: linked.id, topicId: topic.id } });
     await seedArticle("مدخل إلى الفقه");
     const titles = await titlesFound("الفقه", "ARTICLE");
     expect(titles).toEqual(["مدخل إلى الفقه", "مقال في الطهارة"]);
   });
 
-  it("filters by category", async () => {
-    const fiqh = await seedCategory("الفقه");
-    const history = await seedCategory("التاريخ");
-    await seedArticle("الصلاة في الفقه", { categoryId: fiqh.id });
-    await seedArticle("الصلاة في التاريخ", { categoryId: history.id });
+  it("filters by topic", async () => {
+    const fiqh = await seedTopic("الفقه");
+    const history = await seedTopic("التاريخ");
+    const inFiqh = await seedArticle("الصلاة في الفقه");
+    const inHistory = await seedArticle("الصلاة في التاريخ");
+    await prisma.articleTopic.create({ data: { articleId: inFiqh.id, topicId: fiqh.id } });
+    await prisma.articleTopic.create({ data: { articleId: inHistory.id, topicId: history.id } });
 
-    expect(await titlesFound("الصلاة", "ARTICLE", { categoryId: fiqh.id })).toEqual(["الصلاة في الفقه"]);
+    expect(await titlesFound("الصلاة", "ARTICLE", { topicId: fiqh.id })).toEqual(["الصلاة في الفقه"]);
   });
 
-  it("leaves types without categories out when a category is chosen", async () => {
-    const fiqh = await seedCategory("الفقه");
-    await seedArticle("الصلاة", { categoryId: fiqh.id });
+  it("filters videos by topic through their channels", async () => {
+    const fiqh = await seedTopic("الفقه");
+    const history = await seedTopic("التاريخ");
+    await seedVideo("الصلاة في الفقه", { channelId: (await createChannel(prisma, [fiqh.id])).id });
+    await seedVideo("الصلاة طويلًا في الفقه", { kind: "LONG_FORM", classification: "LONG_FORM_CANDIDATE", channelId: (await createChannel(prisma, [fiqh.id])).id });
+    await seedVideo("الصلاة في التاريخ", { channelId: (await createChannel(prisma, [history.id])).id });
+    await seedVideo("الصلاة بلا قناة");
+
+    expect(await titlesFound("الصلاة", "SHORT", { topicId: fiqh.id })).toEqual(["الصلاة في الفقه"]);
+    expect(await titlesFound("الصلاة", "LONG_VIDEO", { topicId: fiqh.id })).toEqual(["الصلاة طويلًا في الفقه"]);
+  });
+
+  it("leaves topics, and whatever isn't in the topic, out when a topic is chosen", async () => {
+    const fiqh = await seedTopic("الفقه");
+    await seedTopic("الصلاة");
+    const article = await seedArticle("الصلاة");
+    await prisma.articleTopic.create({ data: { articleId: article.id, topicId: fiqh.id } });
     await seedLibrary("مكتبة الصلاة");
 
-    const result = await searchContent({ query: "الصلاة", categoryId: fiqh.id });
+    const result = await searchContent({ query: "الصلاة", topicId: fiqh.id });
     expect(result.status === "OVERVIEW" && result.groups.map((group) => group.type)).toEqual(["ARTICLE"]);
-    expect(await titlesFound("الصلاة", "LIBRARY", { categoryId: fiqh.id })).toEqual([]);
+    expect(await titlesFound("الصلاة", "LIBRARY", { topicId: fiqh.id })).toEqual([]);
+    expect(await titlesFound("الصلاة", "TOPIC", { topicId: fiqh.id })).toEqual([]);
+  });
+
+  it("finds a linked library inside a chosen topic", async () => {
+    const fiqh = await seedTopic("الفقه");
+    const library = await seedLibrary("مكتبة الصلاة");
+    await prisma.libraryTopic.create({ data: { libraryId: library.id, topicId: fiqh.id } });
+    expect(await titlesFound("الصلاة", "LIBRARY", { topicId: fiqh.id })).toEqual(["مكتبة الصلاة"]);
   });
 
   it("never shows drafts, archived, or withdrawn content", async () => {
@@ -247,7 +269,7 @@ describe("search across all content types", () => {
 
   it("doesn't show draft content through a topic's name either", async () => {
     const topic = await seedTopic("الميراث");
-    await seedVideo("مسودة", { status: "DRAFT", topicIds: [topic.id] });
+    await seedVideo("مسودة", { status: "DRAFT", channelId: (await createChannel(prisma, [topic.id])).id });
     const draft = await seedArticle("مسودة", { status: "DRAFT" });
     await prisma.articleTopic.create({ data: { articleId: draft.id, topicId: topic.id } });
     expect(await titlesFound("الميراث", "SHORT")).toEqual([]);
@@ -284,7 +306,7 @@ describe("search across all content types", () => {
     expect((await searchContent({ query: "!" })).status).toBe("EMPTY_QUERY");
     expect((await searchContent({ query: "x".repeat(500) })).status).toBe("EMPTY_QUERY");
     expect((await searchContent({ query: { $ne: "" } })).status).toBe("EMPTY_QUERY");
-    expect((await searchContent({ query: "الصلاة", type: "HACK", categoryId: "not-an-id", page: "-3" })).status).toBe("OVERVIEW");
+    expect((await searchContent({ query: "الصلاة", type: "HACK", topicId: "not-an-id", page: "-3" })).status).toBe("OVERVIEW");
   });
 
   it("treats a search operator as plain text", async () => {
@@ -409,15 +431,26 @@ describe("saved content", () => {
     expect((await listSavedContent(reader)).items).toHaveLength(1);
   });
 
-  it("counts a saved topic as interest in its category, but only the first time", async () => {
-    const category = await seedCategory("الفقه");
-    const topic = await seedTopic("موضوع", { categoryId: category.id });
+  it("counts a saved topic as interest in it, but only the first time", async () => {
+    const topic = await seedTopic("موضوع");
     await setContentSaved(reader, { entityType: "TOPIC", entityId: topic.id, isSaved: true });
-    const once = await prisma.userInterest.findFirst({ where: { userId: reader.id, categoryId: category.id } });
+    const once = await prisma.userInterest.findFirst({ where: { userId: reader.id, topicId: topic.id } });
     await setContentSaved(reader, { entityType: "TOPIC", entityId: topic.id, isSaved: true });
-    const twice = await prisma.userInterest.findFirst({ where: { userId: reader.id, categoryId: category.id } });
+    const twice = await prisma.userInterest.findFirst({ where: { userId: reader.id, topicId: topic.id } });
     expect(once?.behaviourScore).toBeGreaterThan(0);
     expect(twice?.behaviourScore).toBe(once?.behaviourScore);
+  });
+
+  it("counts a saved article or video as interest in its public topics", async () => {
+    const [published, draft] = [await seedTopic("منشور"), await seedTopic("مسودة", { status: "DRAFT" })];
+    const article = await seedArticle("مقال");
+    for (const topic of [published, draft]) await prisma.articleTopic.create({ data: { articleId: article.id, topicId: topic.id } });
+    await setContentSaved(reader, { entityType: "ARTICLE", entityId: article.id, isSaved: true });
+    expect((await prisma.userInterest.findMany({ where: { userId: reader.id } })).map((row) => row.topicId)).toEqual([published.id]);
+
+    const video = await seedVideo("مقطع", { channelId: (await createChannel(prisma, [published.id, draft.id])).id });
+    await setContentSaved(other, { entityType: "VIDEO", entityId: video.id, isSaved: true });
+    expect((await prisma.userInterest.findMany({ where: { userId: other.id } })).map((row) => row.topicId)).toEqual([published.id]);
   });
 });
 
@@ -443,8 +476,9 @@ describe("history", () => {
   });
 
   it("gives views an expiry, and records nothing about interests", async () => {
-    const category = await seedCategory("الفقه");
-    const article = await seedArticle("مقال", { categoryId: category.id });
+    const topic = await seedTopic("الفقه");
+    const article = await seedArticle("مقال");
+    await prisma.articleTopic.create({ data: { articleId: article.id, topicId: topic.id } });
     await recordContentView(reader, { entityType: "ARTICLE", entityId: article.id });
 
     const activity = await prisma.userActivity.findFirst({ where: { userId: reader.id } });
@@ -564,14 +598,14 @@ describe("explore", () => {
     expect(updatedTopics.map((topic) => topic.id)).not.toContain(featured.id);
   });
 
-  it("recommends topics only from categories the person chose", async () => {
-    const chosen = await seedCategory("الفقه");
-    const notChosen = await seedCategory("التاريخ");
-    await seedTopic("في الفقه", { categoryId: chosen.id });
-    await seedTopic("في التاريخ", { categoryId: notChosen.id });
-    await seedTopic("فقه مسودة", { categoryId: chosen.id, status: "DRAFT" });
+  it("recommends only the topics the person chose and their sub-topics", async () => {
+    const chosen = await seedTopic("الفقه");
+    const notChosen = await seedTopic("التاريخ");
+    await seedTopic("في الفقه", { parentId: chosen.id });
+    await seedTopic("في التاريخ", { parentId: notChosen.id });
+    await seedTopic("فقه مسودة", { parentId: chosen.id, status: "DRAFT" });
 
-    expect((await listTopicsForInterests([chosen.id])).map((topic) => topic.title)).toEqual(["في الفقه"]);
+    expect((await listTopicsForInterests([chosen.id])).map((topic) => topic.title).sort()).toEqual(["الفقه", "في الفقه"].sort());
     expect(await listTopicsForInterests([])).toEqual([]);
     expect(await listTopicsForInterests(["not-an-id"])).toEqual([]);
   });
@@ -720,7 +754,7 @@ describe("featured articles", () => {
 });
 
 describe("the explore video list", () => {
-  async function exploreVideo(kind: "SHORT" | "LONG_FORM", categoryId: string | null, channelId: string | null, index: number) {
+  async function exploreVideo(kind: "SHORT" | "LONG_FORM", channelId: string | null, index: number) {
     return prisma.video.create({
       data: {
         youtubeVideoId: `x${kind[0]}${String(index).padStart(9, "0")}`,
@@ -730,7 +764,6 @@ describe("the explore video list", () => {
         availability: "AVAILABLE",
         title: `مقطع ${index}`,
         feedKey: index * 1000,
-        categoryId,
         channelId,
         metadataFetchedAt: new Date(),
       },
@@ -738,11 +771,11 @@ describe("the explore video list", () => {
   }
 
   it("goes through every video of a kind, once each, with no limit on how many", async () => {
-    const category = await prisma.category.create({ data: { title: "أ", slug: "explore-all" } });
-    const channels = await Promise.all(["1", "2", "3"].map((n) => prisma.youTubeChannel.create({ data: { youtubeChannelId: `UCx${n}`, title: n } })));
+    const topic = await seedTopic("أ");
+    const channels = [await createChannel(prisma, [topic.id]), await createChannel(prisma, [topic.id]), await createChannel(prisma, [topic.id])];
     const expected = new Set<string>();
-    for (let index = 0; index < 60; index += 1) expected.add((await exploreVideo("LONG_FORM", category.id, channels[index % 3]!.id, index)).id);
-    await exploreVideo("SHORT", category.id, channels[0]!.id, 100);
+    for (let index = 0; index < 60; index += 1) expected.add((await exploreVideo("LONG_FORM", channels[index % 3]!.id, index)).id);
+    await exploreVideo("SHORT", channels[0]!.id, 100);
 
     const seen: string[] = [];
     let cursor: string | null | undefined;
@@ -756,15 +789,16 @@ describe("the explore video list", () => {
     expect(new Set(seen)).toEqual(expected);
   });
 
-  it("narrows to one category, and refuses bad input", async () => {
-    const [first, second] = await Promise.all([prisma.category.create({ data: { title: "أ", slug: "explore-a" } }), prisma.category.create({ data: { title: "ب", slug: "explore-b" } })]);
-    const inside = await exploreVideo("LONG_FORM", first.id, null, 1);
-    await exploreVideo("LONG_FORM", second.id, null, 2);
+  it("narrows to one topic, and refuses bad input", async () => {
+    const [first, second] = [await seedTopic("أ"), await seedTopic("ب")];
+    const inside = await exploreVideo("LONG_FORM", (await createChannel(prisma, [first.id])).id, 1);
+    await exploreVideo("LONG_FORM", (await createChannel(prisma, [second.id])).id, 2);
+    await exploreVideo("LONG_FORM", null, 3);
 
-    const { items } = await listExploreVideos({ kind: "LONG_FORM", categoryId: first.id, size: 24 });
+    const { items } = await listExploreVideos({ kind: "LONG_FORM", topicId: first.id, size: 24 });
     expect(items.map((item) => item.id)).toEqual([inside.id]);
     await expect(listExploreVideos({ kind: "OTHER", size: 24 })).rejects.toThrow();
     await expect(listExploreVideos({ kind: "SHORT", size: 1000 })).rejects.toThrow();
-    await expect(listExploreVideos({ kind: "SHORT", categoryId: "nope", size: 24 })).rejects.toThrow();
+    await expect(listExploreVideos({ kind: "SHORT", topicId: "nope", size: 24 })).rejects.toThrow();
   });
 });

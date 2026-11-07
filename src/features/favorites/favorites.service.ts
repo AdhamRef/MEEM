@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { objectIdSchema } from "@/features/categories/schemas";
+import { objectIdSchema } from "@/features/topics/schemas";
 import { publicContentFilter } from "@/features/content/common";
 import { publicPlaylistFilter } from "@/features/playlists/playlist-filters";
-import { applyCategorySignal } from "@/features/recommendations/signals.service";
+import { applyTopicSignal, topicIdsOfChannel } from "@/features/recommendations/signals.service";
 import { getScoringConfig } from "@/features/recommendations/settings.service";
 import { AppError, isUniqueConstraintError } from "@/lib/errors";
 import { assertSignedIn, type Actor } from "@/lib/permissions";
@@ -17,18 +17,24 @@ export const saveContentSchema = z.strictObject({ entityType: z.enum(SAVEABLE_TY
 
 const MAX_STATUS_IDS = 50;
 
-/** The item, if it's public. A playlist has no category, so saving one changes no recommendation. */
-async function findSaveable(entityType: SaveableType, id: string): Promise<{ categoryId: string | null } | null> {
+/** The item's topics, if it's public. Null when it isn't. Saving a playlist changes no recommendation. */
+async function findSaveable(entityType: SaveableType, id: string): Promise<{ topicIds: string[] } | null> {
   switch (entityType) {
-    case "VIDEO":
-      return prisma.video.findFirst({ where: { id, status: "PUBLISHED", isArchived: false }, select: { categoryId: true } });
-    case "ARTICLE":
-      return prisma.article.findFirst({ where: { id, ...publicContentFilter }, select: { categoryId: true } });
-    case "TOPIC":
-      return prisma.topic.findFirst({ where: { id, ...publicContentFilter }, select: { categoryId: true } });
+    case "VIDEO": {
+      const video = await prisma.video.findFirst({ where: { id, status: "PUBLISHED", isArchived: false }, select: { channelId: true } });
+      return video ? { topicIds: await topicIdsOfChannel(video.channelId) } : null;
+    }
+    case "ARTICLE": {
+      const article = await prisma.article.findFirst({ where: { id, ...publicContentFilter }, select: { topics: { where: { topic: publicContentFilter }, select: { topicId: true } } } });
+      return article ? { topicIds: article.topics.map((link) => link.topicId) } : null;
+    }
+    case "TOPIC": {
+      const topic = await prisma.topic.findFirst({ where: { id, ...publicContentFilter }, select: { id: true } });
+      return topic ? { topicIds: [topic.id] } : null;
+    }
     case "PLAYLIST": {
       const playlist = await prisma.playlist.findFirst({ where: { id, ...publicPlaylistFilter }, select: { id: true } });
-      return playlist ? { categoryId: null } : null;
+      return playlist ? { topicIds: [] } : null;
     }
   }
 }
@@ -53,7 +59,7 @@ export async function setContentSaved(actor: Actor | null, rawInput: unknown): P
   try {
     await withTransaction(async (tx) => {
       await tx.favorite.create({ data: { userId: actor.id, entityType, entityId } });
-      if (item.categoryId) await applyCategorySignal(tx, actor.id, item.categoryId, "save", config, now);
+      for (const topicId of item.topicIds) await applyTopicSignal(tx, actor.id, topicId, "save", config, now);
     });
   } catch (error) {
     if (!isUniqueConstraintError(error)) throw error;

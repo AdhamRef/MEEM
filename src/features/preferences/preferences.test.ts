@@ -7,7 +7,7 @@ import {
   readGuestPreferences,
   writeGuestPreferences,
 } from "./guest-storage";
-import { mergeOnboardingState, mergeSelectedCategories } from "./merge";
+import { mergeOnboardingState, mergeSelectedTopics } from "./merge";
 import { guestPreferencesSchema, saveInterestsSchema } from "./schemas";
 
 const ID_A = "a".repeat(24);
@@ -22,24 +22,24 @@ function memoryStorage(initial?: string) {
   };
 }
 
-describe("mergeSelectedCategories", () => {
+describe("mergeSelectedTopics", () => {
   const active = new Set(["1", "2", "3"]);
 
   it("keeps choices from both the account and the guest", () => {
-    expect(mergeSelectedCategories(["1"], ["2"], active)).toEqual(["1", "2"]);
+    expect(mergeSelectedTopics(["1"], ["2"], active)).toEqual(["1", "2"]);
   });
 
-  it("doesn't duplicate a category chosen on both sides", () => {
-    expect(mergeSelectedCategories(["1", "2"], ["2", "3"], active)).toEqual(["1", "2", "3"]);
+  it("doesn't duplicate a topic chosen on both sides", () => {
+    expect(mergeSelectedTopics(["1", "2"], ["2", "3"], active)).toEqual(["1", "2", "3"]);
   });
 
-  it("drops categories that no longer exist or are inactive", () => {
-    expect(mergeSelectedCategories(["gone"], ["2", "also-gone"], active)).toEqual(["2"]);
+  it("drops topics that no longer exist or are unpublished", () => {
+    expect(mergeSelectedTopics(["gone"], ["2", "also-gone"], active)).toEqual(["2"]);
   });
 
   it("gives the same result when repeated, so a retried merge is safe", () => {
-    const once = mergeSelectedCategories(["1"], ["2"], active);
-    expect(mergeSelectedCategories(once, ["2"], active)).toEqual(once);
+    const once = mergeSelectedTopics(["1"], ["2"], active);
+    expect(mergeSelectedTopics(once, ["2"], active)).toEqual(once);
   });
 });
 
@@ -58,7 +58,7 @@ describe("mergeOnboardingState", () => {
 });
 
 describe("guest storage", () => {
-  const preferences = { version: 1 as const, selectedCategoryIds: [ID_A], onboarding: "completed" as const };
+  const preferences = { version: 2 as const, selectedTopicIds: [ID_A], channelChoices: { [ID_B]: false }, onboarding: "completed" as const };
 
   it("returns what was saved", () => {
     const storage = memoryStorage();
@@ -72,8 +72,8 @@ describe("guest storage", () => {
 
   it.each([
     ["invalid JSON", "{not json"],
-    ["a wrong version", JSON.stringify({ ...preferences, version: 2 })],
-    ["a bad category ID", JSON.stringify({ ...preferences, selectedCategoryIds: ["<script>"] })],
+    ["a wrong version", JSON.stringify({ ...preferences, version: 1 })],
+    ["a bad topic ID", JSON.stringify({ ...preferences, selectedTopicIds: ["<script>"] })],
     ["a role injected by hand", JSON.stringify({ ...preferences, role: "SUPER_ADMIN" })],
   ])("treats %s as empty", (_name, stored) => {
     expect(readGuestPreferences(memoryStorage(stored))).toEqual(EMPTY_GUEST_PREFERENCES);
@@ -105,20 +105,27 @@ describe("guest storage", () => {
   it("only treats real choices as something to merge", () => {
     expect(hasGuestPreferences(EMPTY_GUEST_PREFERENCES)).toBe(false);
     expect(hasGuestPreferences({ ...EMPTY_GUEST_PREFERENCES, onboarding: "skipped" })).toBe(true);
-    expect(hasGuestPreferences({ ...EMPTY_GUEST_PREFERENCES, selectedCategoryIds: [ID_B] })).toBe(true);
+    expect(hasGuestPreferences({ ...EMPTY_GUEST_PREFERENCES, selectedTopicIds: [ID_B] })).toBe(true);
   });
 });
 
 describe("input validation", () => {
   it("rejects fields the client has no business sending", () => {
-    expect(saveInterestsSchema.safeParse({ categoryIds: [ID_A], userId: ID_B }).success).toBe(false);
-    expect(saveInterestsSchema.safeParse({ categoryIds: [ID_A], role: "ADMIN" }).success).toBe(false);
+    expect(saveInterestsSchema.safeParse({ topicIds: [ID_A], channelChoices: {}, userId: ID_B }).success).toBe(false);
+    expect(saveInterestsSchema.safeParse({ topicIds: [ID_A], channelChoices: {}, role: "ADMIN" }).success).toBe(false);
     expect(guestPreferencesSchema.safeParse({ ...EMPTY_GUEST_PREFERENCES, userId: ID_B }).success).toBe(false);
   });
 
   it("rejects malformed and oversized ID lists", () => {
-    expect(saveInterestsSchema.safeParse({ categoryIds: ["not-an-id"] }).success).toBe(false);
-    expect(saveInterestsSchema.safeParse({ categoryIds: [{ $ne: null }] }).success).toBe(false);
-    expect(saveInterestsSchema.safeParse({ categoryIds: Array(101).fill(ID_A) }).success).toBe(false);
+    expect(saveInterestsSchema.safeParse({ topicIds: ["not-an-id"], channelChoices: {} }).success).toBe(false);
+    expect(saveInterestsSchema.safeParse({ topicIds: [{ $ne: null }], channelChoices: {} }).success).toBe(false);
+    expect(saveInterestsSchema.safeParse({ topicIds: Array(101).fill(ID_A), channelChoices: {} }).success).toBe(false);
+  });
+
+  it("rejects bad channel switches", () => {
+    expect(saveInterestsSchema.safeParse({ topicIds: [], channelChoices: { "not-an-id": true } }).success).toBe(false);
+    expect(saveInterestsSchema.safeParse({ topicIds: [], channelChoices: { [ID_A]: "yes" } }).success).toBe(false);
+    const tooMany = Object.fromEntries(Array.from({ length: 501 }, (_, index) => [index.toString(16).padStart(24, "0"), true]));
+    expect(saveInterestsSchema.safeParse({ topicIds: [], channelChoices: tooMany }).success).toBe(false);
   });
 });

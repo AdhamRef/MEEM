@@ -13,7 +13,7 @@ export const shortsGridClass = "grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 
 
 function ChannelAvatar({ video }: { video: VideoCard }) {
   return video.channelImageUrl ? (
-    <img src={video.channelImageUrl} alt="" loading="lazy" decoding="async" referrerPolicy="strict-origin-when-cross-origin" className="size-9 shrink-0 rounded-full bg-surface-elevated object-cover" />
+    <img src={video.channelImageUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="size-9 shrink-0 rounded-full bg-surface-elevated object-cover" />
   ) : (
     <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-text-secondary">
       <Tv className="size-4" strokeWidth={1.5} />

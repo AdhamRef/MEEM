@@ -1,10 +1,10 @@
 /**
  * What happened during this visit, so the feed answers within a few swipes rather than over days.
- * It only ever concerns a category or a channel, nothing is concluded about the person, and it's
+ * It only ever concerns a topic or a channel, nothing is concluded about the person, and it's
  * never stored: it lives in the browser until the page closes, and each page request carries it.
  */
 export interface SessionMomentum {
-  categories: Record<string, number>;
+  topics: Record<string, number>;
   channels: Record<string, number>;
 }
 
@@ -18,16 +18,17 @@ const MAX_TRACKED = 40;
 
 const emptyRecord = (): Record<string, number> => ({});
 
-export const emptySessionMomentum = (): SessionMomentum => ({ categories: emptyRecord(), channels: emptyRecord() });
+export const emptySessionMomentum = (): SessionMomentum => ({ topics: emptyRecord(), channels: emptyRecord() });
 
 function add(record: Record<string, number>, id: string | null | undefined, weight: number): Record<string, number> {
   if (!id || (!(id in record) && Object.keys(record).length >= MAX_TRACKED)) return record;
   return { ...record, [id]: Math.max(-MAX_SESSION_MOMENTUM, Math.min(MAX_SESSION_MOMENTUM, (record[id] ?? 0) + weight)) };
 }
 
-export function addSessionMomentum(momentum: SessionMomentum, video: { category: { id: string } | null; channelId: string | null }, event: MomentumEvent): SessionMomentum {
+export function addSessionMomentum(momentum: SessionMomentum, video: { topics: { id: string }[]; channelId: string | null }, event: MomentumEvent): SessionMomentum {
   const weight = EVENT_WEIGHTS[event];
-  return { categories: add(momentum.categories, video.category?.id, weight), channels: add(momentum.channels, video.channelId, weight) };
+  // A video belongs to every topic of its channel, so all of them move together.
+  return { topics: video.topics.reduce((record, topic) => add(record, topic.id, weight), momentum.topics), channels: add(momentum.channels, video.channelId, weight) };
 }
 
 function encode(record: Record<string, number>): string {
@@ -37,11 +38,11 @@ function encode(record: Record<string, number>): string {
     .join(",");
 }
 
-export function sessionMomentumParams({ categories, channels }: SessionMomentum): Record<string, string> {
+export function sessionMomentumParams({ topics, channels }: SessionMomentum): Record<string, string> {
   const params: Record<string, string> = {};
-  const encodedCategories = encode(categories);
+  const encodedTopics = encode(topics);
   const encodedChannels = encode(channels);
-  if (encodedCategories) params.momentum = encodedCategories;
+  if (encodedTopics) params.momentum = encodedTopics;
   if (encodedChannels) params.channelMomentum = encodedChannels;
   return params;
 }

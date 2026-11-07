@@ -3,7 +3,6 @@ import Link from "next/link";
 import { JobWorkspace } from "@/components/admin/importer/job-workspace";
 import { StateMessage } from "@/components/shared/state-message";
 import { strings } from "@/config/strings.ar";
-import { listActiveCategories } from "@/features/categories/categories.service";
 import { getImportJob } from "@/features/youtube/import/import.service";
 import { checkPageAccess } from "@/lib/auth/guards";
 import { AppError } from "@/lib/errors";
@@ -25,7 +24,6 @@ export default async function ImportJobPage({ params }: { params: Promise<{ id: 
   });
   if (!job) return <StateMessage icon={FileX} title={strings.errors.notFound} />;
 
-  const categories = await listActiveCategories();
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-5 px-4 py-8" data-testid="import-job-page">
@@ -39,7 +37,6 @@ export default async function ImportJobPage({ params }: { params: Promise<{ id: 
         startedAt={job.createdAt.toISOString()}
         initial={{ status: job.status, discoveredCount: job.discoveredCount, importedCount: job.importedCount, duplicateCount: job.duplicateCount, skippedCount: job.skippedCount, failedCount: job.failedCount, message: null }}
         initialErrors={job.status === "PAUSED" ? job.errors.map((error) => error.message) : []}
-        categories={categories.map((category) => ({ id: category.id, title: category.title }))}
       />
     </div>
   );

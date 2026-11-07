@@ -56,7 +56,6 @@ describe("permission matrix", () => {
     ["EDITOR", "settings.manage", false],
     // §19.4 admin: most administrative work, but not roles or settings.
     ["ADMIN", "content.publish", true],
-    ["ADMIN", "categories.manage", true],
     ["ADMIN", "youtube.import", true],
     ["ADMIN", "audit.view", true],
     ["ADMIN", "users.manage", false],
@@ -79,7 +78,7 @@ describe("individual grants", () => {
     expect(hasPermission(actor("USER", ["content.publish"]), "content.publish")).toBe(false);
   });
 
-  it.each(["users.manage", "settings.manage", "categories.manage", "admin.access"])("ignores a stored grant of %s, which isn't grantable", (grant) => {
+  it.each(["users.manage", "settings.manage", "admin.access"])("ignores a stored grant of %s, which isn't grantable", (grant) => {
     expect(hasPermission(actor("CONTRIBUTOR", [grant]), grant as Permission)).toBe(grant === "admin.access");
     expect(hasPermission(actor("USER", [grant]), grant as Permission)).toBe(false);
   });

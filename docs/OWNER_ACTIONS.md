@@ -59,7 +59,11 @@ Your credentials are in `.env`, but only you can complete a real sign-in, becaus
 - [ ] **My proposed decisions.** Review the "Proposed, awaiting approval" table in [PROJECT_STATUS.md](PROJECT_STATUS.md). Tell me only what you disagree with. The ones most worth reading are listed below.
 - [x] **Product name:** ميم, decided 2026-11-05.
 - [x] **Logo and favicon:** `public/logo.png`, supplied 2026-11-05. An SVG would stay sharper at large sizes, if one exists.
-- [ ] **Starting categories.** Check that the 12 categories suit you, on `/interests`.
+- [ ] **Give your channels their topics.** This is what turns on the first-visit choices. Until a channel has a topic, nobody can choose it, and the feed works as it does today.
+  1. Run `npm run db:sync`, then `npm run db:seed-taxonomy`, which adds the 12 starting topics. If `db:sync` stops on duplicate import previews, as it did before, tell me.
+  2. In `/admin/channels`, press **تعديل الموضوعات** on each of your 8 channels and pick its topics.
+  3. Change, rename, or remove the starting topics in `/admin/topics` to suit you.
+- [ ] **Try the first visit.** Open the home page in a private window, on a phone if you can, and tell me how the topics and channels screens feel.
 
 | Decision to check | What I did | Why it matters |
 |---|---|---|
@@ -106,7 +110,7 @@ I can prepare the material, but these need you, and some need a person qualified
 
 - [ ] **Quranic text:** have someone qualified check how it displays. It looked right to me, but that's only a visual check.
 - [ ] **Arabic interface text:** have a native editor read it. I wrote all of it.
-- [ ] **Article and category wording:** the content's accuracy is your team's responsibility, and the platform doesn't check it.
+- [ ] **Article and topic wording:** the content's accuracy is your team's responsibility, and the platform doesn't check it.
 
 ### Hosting and accounts
 

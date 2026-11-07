@@ -233,8 +233,8 @@ test.describe("first-visit privacy notice", () => {
     await expect(page.getByRole("dialog")).toHaveCount(0);
 
     // The page beneath it still works.
-    await page.getByTestId("explore-category").first().click();
-    await expect(page).toHaveURL(/\/explore\?category=/);
+    await page.getByTestId("explore-topic").first().click();
+    await expect(page).toHaveURL(/\/explore\?topic=/);
 
     await page.getByTestId("privacy-notice-dismiss").click();
     await expect(notice).toHaveCount(0);
@@ -325,7 +325,7 @@ test.describe("no dead controls", () => {
     test.setTimeout(240_000);
     await signIn(page, "SUPER_ADMIN", baseURL!);
     const visited = new Map<string, number>();
-    for (const path of ["/admin", "/admin/shorts", "/admin/youtube-importer", "/admin/channels", "/admin/articles", "/admin/topics", "/admin/categories", "/admin/libraries", "/admin/playlists", "/admin/resources", "/admin/collections", "/admin/users", "/admin/audit-logs", "/admin/settings", "/admin/youtube-status"]) {
+    for (const path of ["/admin", "/admin/shorts", "/admin/youtube-importer", "/admin/channels", "/admin/articles", "/admin/topics", "/admin/libraries", "/admin/playlists", "/admin/resources", "/admin/collections", "/admin/users", "/admin/audit-logs", "/admin/settings", "/admin/youtube-status"]) {
       await checkPage(page, path, visited);
     }
   });

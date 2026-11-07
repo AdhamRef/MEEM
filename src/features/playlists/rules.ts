@@ -40,3 +40,11 @@ export function formatDuration(totalSeconds: number | null): string | null {
   const pad = (value: number) => String(value).padStart(2, "0");
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
 }
+
+/** A playlist's total length in words, such as "3 س 20 د", for its header. */
+export function formatTotalDuration(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.round((totalSeconds % 3600) / 60);
+  if (hours === 0) return `${Math.max(1, minutes)} د`;
+  return minutes ? `${hours} س ${minutes} د` : `${hours} س`;
+}

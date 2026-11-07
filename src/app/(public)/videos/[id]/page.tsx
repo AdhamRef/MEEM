@@ -7,6 +7,7 @@ import { VideoWatch } from "@/components/video/video-watch";
 import { strings } from "@/config/strings.ar";
 import { listPublishedArticlesForVideo } from "@/features/articles/articles.service";
 import { getPublicVideo } from "@/features/shorts/feed.service";
+import { listVideoSuggestions } from "@/features/shorts/suggestions.service";
 import { metaDescription, videoJsonLd } from "@/lib/seo";
 
 interface PageProps {
@@ -31,13 +32,16 @@ export default async function VideoPage({ params }: PageProps) {
   const video = await loadVideo((await params).id);
   if (!video) notFound();
 
-  const articles = await listPublishedArticlesForVideo(video.id);
+  const [articles, suggestions] = await Promise.all([listPublishedArticlesForVideo(video.id), listVideoSuggestions(video)]);
 
   return (
     <>
     <JsonLd data={videoJsonLd(video)} />
     <VideoWatch
+      key={video.id}
       video={video}
+      upNext={suggestions.upNext}
+      channelShorts={video.kind === "LONG_FORM" ? suggestions.shorts : []}
       related={
         articles.length ? (
           <section aria-labelledby="video-articles" className="pt-3" data-testid="video-articles">

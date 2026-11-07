@@ -91,7 +91,8 @@ export default async function YouTubeStatusPage() {
           <Metric label={s.playlistsDue} value={status.refresh.playlistsDue} />
           <Metric label={s.channelsDue} value={status.refresh.channelsDue} />
           <Metric label={s.lastManualRefresh} value={status.refresh.lastRun ? formatDate(status.refresh.lastRun) : s.never} />
-          <Metric label={s.activeJobs} value={status.jobs.active + status.jobs.paused} />
+          <Metric label={strings.sources.overviewFollowed} value={status.sources.followedChannels} />
+          <Metric label={strings.sources.overviewFetching} value={status.sources.fetchingChannels} />
         </dl>
         <p className="text-xs text-text-secondary">{s.refreshAfterNote(status.refresh.afterDays)}</p>
       </section>

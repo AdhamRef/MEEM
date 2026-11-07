@@ -11,6 +11,7 @@ export interface YouTubePlayer {
   getVideoUrl(): string;
   playVideoAt(index: number): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
+  setPlaybackRate(suggestedRate: number): void;
   destroy(): void;
 }
 

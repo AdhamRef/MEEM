@@ -756,6 +756,37 @@ test.describe("shareable pages", () => {
     expect(box!.height).toBeGreaterThanOrEqual(200);
   });
 
+  test("the video page has theater mode, speed, shortcuts, suggestions, and an expandable description", async ({ page, isMobile }) => {
+    const video = await prisma.video.findUniqueOrThrow({ where: { youtubeVideoId: "e2eLong0000" } });
+    await page.goto(`/videos/${video.id}`);
+    await expect(page.getByTestId("video-poster")).toHaveCount(0, { timeout: 10_000 });
+
+    await page.getByTestId("control-speed").click();
+    await expect.poll(async () => (await calls(page)).some((call) => call.name === "setPlaybackRate" && call.arg === 1.25)).toBeTruthy();
+    await expect(page.getByTestId("control-speed")).toContainText("1.25×");
+
+    // Shortcuts act on the player, but never while typing.
+    await page.locator("body").press("l");
+    await expect.poll(async () => (await calls(page)).some((call) => call.name === "seekTo")).toBeTruthy();
+
+    if (!isMobile) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.getByTestId("control-theater").click();
+      await expect(page.getByTestId("video-watch")).toHaveAttribute("data-theater", "true");
+      await page.reload();
+      await expect(page.getByTestId("video-watch")).toHaveAttribute("data-theater", "true");
+      await page.getByTestId("control-theater").click();
+      await expect(page.getByTestId("video-watch")).not.toHaveAttribute("data-theater", "true");
+    }
+
+    await expect(page.getByTestId("up-next")).toBeVisible();
+    const description = page.getByTestId("video-description");
+    if (await description.count()) {
+      await description.getByTestId("video-description-toggle").click();
+      await expect(description.getByTestId("video-description-toggle")).toHaveAttribute("aria-expanded", "true");
+    }
+  });
+
   test("comments are labelled as YouTube's, read-only, and explain when unavailable", async ({ page }) => {
     const video = await prisma.video.findUniqueOrThrow({ where: { youtubeVideoId: "e2eLong0000" } });
     await page.goto(`/videos/${video.id}#comments`);

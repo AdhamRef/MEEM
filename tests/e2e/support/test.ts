@@ -56,6 +56,7 @@ const FAKE_IFRAME_API = `
     self.getVideoUrl = () => "https://www.youtube.com/watch?v=" + frame.dataset.videoId;
     self.playVideoAt = guarded("playVideoAt", (index) => { fire(1); return index; });
     self.seekTo = guarded("seekTo", (seconds) => { time = seconds; });
+    self.setPlaybackRate = guarded("setPlaybackRate", (rate) => rate);
     self.__setDuration = (value) => { duration = value; };
     self.__setVideoId = (id) => { frame.dataset.videoId = id; };
     self.loadVideoById = guarded("loadVideoById", (video) => { const id = typeof video === "string" ? video : video.videoId; frame.dataset.videoId = id; time = (video && video.startSeconds) || 0; fire(1); });

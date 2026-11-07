@@ -16,6 +16,8 @@ Rules this conflicts with: autoplay only when more than half the player is visib
 
 **This won't pass an audit as it stands.** Set `FEED_IMMERSIVE_OVERLAY` to false before applying, which also turns buffering off and restores the layout the tables below describe. The tables describe that compliant layout, not the current one.
 
+**Publishing is automatic, by the owner's decision of 2026-11-07 (plan D10).** New videos from followed channels and playlists go live without a person reviewing each one, and a scheduled job checks those sources every hour. The kind, Short or long, is the length-and-shape suggestion until someone changes it. This weakens the "human curation" case below, which now rests on choosing the sources and hiding what doesn't fit. The hourly job's quota use is bounded by a daily ceiling and can be switched off.
+
 **Video pages and statistics also differ, by the owner's decision of 2026-11-06.** Video pages crop YouTube's interface away, put our own controls in front, start by themselves, and stay at the top while scrolling, under the same `FEED_IMMERSIVE_OVERLAY` switch. Statistics are on: likes, views, and comment counts are stored and shown, which the plan's R2 says YouTube limits to audited developers. Set `statisticsEnabled` to false in `DEFAULT_YOUTUBE_SETTINGS` before applying, and remove what's stored.
 
 **Explore also looks much like YouTube's home page, by the owner's decision of 2026-11-06:** a grid of video cards, category chips, and a Shorts row, in this site's own name, logo, and colours. The curation, articles, topics, and libraries are what give it independent value, but the resemblance adds to question 1 below (III.I.1, and the guide's "identical copy of YouTube"). Worth reviewing before the audit. It starts no playback by itself.
@@ -43,7 +45,7 @@ A free, Arabic-language platform for learning about Islam. Volunteer editors cho
 
 This is the case for the main question below, and should be demonstrable on the live site:
 
-- **Human curation.** Nothing is published automatically, and a person reviews every video.
+- **Human curation.** Editors choose which channels and playlists to follow, and hide anything that doesn't fit. Since 2026-11-07, each video is no longer reviewed before it appears (plan D10).
 - **A knowledge network** connecting videos to articles, topics, and libraries, which YouTube doesn't offer.
 - **Original articles** written by the team, with sources.
 - **Arabic-first organisation** by subject rather than by channel or popularity.
@@ -80,7 +82,7 @@ Evidence is the automated tests, unless it says otherwise. They run with a stand
 | Requirement | How | Evidence |
 |---|---|---|
 | Stored data refreshed or removed within 30 days | Daily job, oldest first. Anything older with nothing fresher is withdrawn, even without API access. | `feed.test.ts`, `playlists.test.ts` |
-| Import previews within 30 days | Removed by a 29-day TTL index | `importer.test.ts`. **Automatic removal itself not observed.** |
+| Import previews within 30 days | The old importer's previews are removed by a 29-day TTL index. Sources store no previews. | **Automatic removal itself not observed.** |
 | Deleted videos noticed within 30 days | The same job, which clears their data | `feed.test.ts` |
 | Statistics off | No way to enable them on screen | `admin-system.test.ts` |
 | Statistics not used for ranking | Scoring has no input for them | `scoring.test.ts`; `discovery.test.ts` |
@@ -89,8 +91,8 @@ Evidence is the automated tests, unless it says otherwise. They run with a stand
 | Comments read-only, labelled, not stored | Fetched on request | `youtube-api.test.ts` |
 | No YouTube OAuth scopes | Only `openid`, `email`, `profile` | `auth-infrastructure.test.ts` |
 | API calls come from one module | `lib/youtube`, and feed rendering makes none | `feed.test.ts` |
-| Uploads playlist used, requests batched, no retry on `quotaExceeded` | See [YOUTUBE_INTEGRATION.md](YOUTUBE_INTEGRATION.md) | `importer.test.ts`, `youtube-api.test.ts` |
-| Shorts detection gives candidates only | A person's review is required to publish | `importer.test.ts`, `feed.test.ts` |
+| Uploads playlist used, requests batched, no retry on `quotaExceeded` | See [YOUTUBE_INTEGRATION.md](YOUTUBE_INTEGRATION.md) | `sources.test.ts`, `youtube-api.test.ts` |
+| Shorts detection gives a suggestion only | **Not met since 2026-11-07:** sources publish with the suggested kind, and admins correct it afterwards (plan D10) | `sources.test.ts`, `feed.test.ts` |
 
 ### Privacy
 
@@ -105,4 +107,4 @@ Evidence is the automated tests, unless it says otherwise. They run with a stand
 
 ## Quota
 
-If asked to justify usage. A channel of 10,000 videos costs about 400 units to preview, and nothing further to import. By calculation, the daily refresh at its default limits uses at most about 80 units: 20 batches of videos, 10 playlists, and 50 channels. So the default 10,000 units a day should be enough, and no increase is needed yet. Real use hasn't been measured, because no real channel has been imported.
+If asked to justify usage. A channel of 10,000 videos costs about 400 units to fetch the first time. After that, an hourly check costs about 1 unit per followed channel when nothing is new, so 50 channels use about 1,200 units a day, plus about 2 units per 50 items for each YouTube playlist. The hourly job stops at a configurable ceiling, 8,000 units by default. By calculation, the daily refresh at its default limits uses at most about 80 units: 20 batches of videos, 10 playlists, and 50 channels. So the default 10,000 units a day should be enough, and no increase is needed yet. Real use hasn't been measured, because no real channel has been imported.

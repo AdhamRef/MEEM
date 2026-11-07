@@ -524,6 +524,23 @@ model YouTubeChannel {
   isActive          Boolean   @default(true)
   lastSyncedAt      DateTime?
   metadataFetchedAt DateTime?
+  /// From the same channels request, at no extra quota. Shows how far the first fetch has got.
+  youtubeVideoCount Int?
+
+  // OWNER'S DECISION, 2026-11-07 (plan D10): a followed channel is checked every hour, and what
+  // it uploads is published automatically. Optional, so channels stored earlier read as not followed.
+  // Filters only ever compare these with true, which null and missing both fail alike.
+  isFollowed          Boolean?
+  followedAt          DateTime?
+  /// True once every older upload has been walked. Until then, checks continue from backfillPageToken.
+  isBackfillComplete  Boolean?
+  backfillPageToken   String?
+  lastCheckedAt       DateTime?
+  /// A safe message, kept until the next check succeeds.
+  lastCheckError      String?
+  /// A short lease, so the hourly job and an open admin page never walk one channel at once.
+  checkLockedUntil    DateTime?
+
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -535,6 +552,7 @@ model YouTubeChannel {
   @@index([isActive])
   @@index([handle])
   @@index([metadataFetchedAt])
+  @@index([isFollowed, lastCheckedAt])
 }
 
 /// Holds both Shorts and long-form videos. See plan decision D3 and §12.6.

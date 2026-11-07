@@ -34,230 +34,92 @@ async function seedVideo(overrides: Record<string, unknown> = {}) {
   });
 }
 
-/** A job waiting for review, as discovery leaves it. The browser tests run with the API switched off. */
-async function seedJob(type: "IMPORT" | "SYNC" = "IMPORT", count = 3) {
+/** A followed channel, as the hourly check leaves it. The browser tests run with the API switched off. */
+async function seedChannel(options: { title?: string; isFollowed?: boolean; isBackfillComplete?: boolean } = {}) {
   const id = unique();
-  const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: `UC${id}${id}${id}`, title: `قناة ${id}`, handle: `@${id}`, uploadsPlaylistId: `UU${id}`, metadataFetchedAt: new Date() } });
-  const job = await prisma.importJob.create({ data: { type, status: "READY_FOR_REVIEW", channelId: channel.id, discoveredCount: count } });
-  const candidates = [];
-  for (let index = 0; index < count; index += 1) {
-    const youtubeVideoId = `c${id}${index}00`.slice(0, 11);
-    candidates.push(
-      await prisma.importCandidate.create({
-        data: {
-          jobId: job.id,
-          youtubeVideoId,
-          title: `مرشح ${id} ${index}`,
-          channelTitle: channel.title,
-          thumbnails: [{ quality: "high", url: `https://i.ytimg.com/vi/${youtubeVideoId}/hqdefault.jpg` }],
-          durationSeconds: index === 0 ? 1200 : 40,
-          ytPublishedAt: new Date("2026-01-01"),
-          classification: index === 0 ? "LONG_FORM_CANDIDATE" : "SHORT_CANDIDATE",
-          expiresAt: new Date(Date.now() + 86_400_000 * 29),
-        },
-      }),
-    );
-  }
-  return { job, channel, candidates };
+  return prisma.youTubeChannel.create({
+    data: {
+      youtubeChannelId: `UC${id}${id}${id}`,
+      title: options.title ?? `قناة ${id}`,
+      handle: `@${id}`,
+      uploadsPlaylistId: `UU${id}`,
+      metadataFetchedAt: new Date(),
+      isFollowed: options.isFollowed ?? true,
+      followedAt: new Date(),
+      isBackfillComplete: options.isBackfillComplete ?? true,
+      lastCheckedAt: new Date(),
+      youtubeVideoCount: 10,
+    },
+  });
 }
 
-test.describe("the YouTube importer", () => {
-  test("reviews, filters, selects, assigns, imports as drafts, and reports", async ({ page, baseURL }) => {
+test.describe("content sources", () => {
+  test("lists followed channels, and hides and shows a channel's videos from its page", async ({ page, baseURL }) => {
     test.setTimeout(120_000);
     await signIn(page, "ADMIN", baseURL!);
-    const { job, channel, candidates } = await seedJob();
-    await page.goto(`/admin/youtube-importer/${job.id}`);
+    const channel = await seedChannel();
+    const shown = await seedVideo({ status: "PUBLISHED", publishedAt: new Date(), channelId: channel.id });
+    const other = await seedVideo({ status: "PUBLISHED", publishedAt: new Date(), channelId: channel.id });
 
-    await expect(page.getByTestId("job-status")).toHaveAttribute("data-status", "READY_FOR_REVIEW");
-    const rows = page.getByTestId("candidate");
-    await expect(rows).toHaveCount(3);
-    await expect(rows.first()).toContainText("المصدر: YouTube");
-    await expect(page.getByTestId("import-start")).toBeDisabled();
+    await page.goto(`/admin/sources?query=${encodeURIComponent(channel.title)}`);
+    const row = page.getByTestId("source-channel").filter({ hasText: channel.title });
+    await expect(row).toContainText("2 منشور");
+    await expect(row.getByTestId("source-channel-status")).toContainText("محدّثة");
+    // The browser tests have no API key, so adding and checking explain why they're off.
+    await expect(page.getByTestId("add-source-unavailable")).toBeVisible();
+    await expect(row.getByTestId("channel-check")).toBeDisabled();
 
-    // The filters are candidates only, and say so.
-    await page.getByTestId("import-filter-long").click();
-    await expect(rows).toHaveCount(1);
-    await expect(rows.first().getByTestId("candidate-class")).toHaveText("مرشح كمقطع طويل");
-    await page.getByTestId("import-filter-short").click();
-    await expect(rows).toHaveCount(2);
+    await row.getByTestId("source-channel-link").click();
+    await expect(page).toHaveURL(new RegExp(`/admin/sources/channels/${channel.id}$`));
+    await expect(page.getByTestId("bulk-row")).toHaveCount(2);
 
-    await page.getByTestId("select-all").click();
-    await expect(page.getByTestId("import-start")).toContainText("(2)");
-    await page.getByTestId("import-filter-selected").click();
-    await expect(rows).toHaveCount(2);
-    await page.getByTestId("import-filter-unselected").click();
-    await expect(rows).toHaveCount(1);
+    await page.getByTestId("bulk-row").filter({ hasText: shown.title }).getByTestId("bulk-check").check();
+    await page.getByTestId("bulk-unpublish").click();
+    await expect(page.getByTestId("bulk-message")).toBeVisible();
+    await expect.poll(async () => (await prisma.video.findUniqueOrThrow({ where: { id: shown.id } })).status).toBe("DRAFT");
 
-    // Topics follow the channel, so they aren't assigned here, and the panel says so.
-    await expect(page.getByTestId("assignment-panel")).toContainText("تتبع المقاطع موضوعات قناتها");
-    await page.getByTestId("assign-kind").selectOption("LONG_FORM");
-    await page.getByTestId("assign-apply").click();
-    await expect(page.getByTestId("job-notice")).toContainText("صُنّف");
-
-    await page.getByTestId("import-start").click();
-    await expect(page.getByTestId("job-status")).toHaveAttribute("data-status", "COMPLETED", { timeout: 30_000 });
-    await expect(page.getByTestId("count-imported")).toHaveText("2");
-    await expect(page.getByTestId("count-skipped")).toHaveText("1");
-    // Shown only when something failed.
-    await expect(page.getByTestId("count-failed")).toHaveCount(0);
-
-    const imported = await prisma.video.findMany({ where: { youtubeVideoId: { in: candidates.map((row) => row.youtubeVideoId) } } });
-    expect(imported).toHaveLength(2);
-    expect(imported.every((video) => video.status === "DRAFT" && video.kind === "LONG_FORM" && video.channelId === channel.id)).toBe(true);
-    expect((await page.request.get(`/videos/${imported[0]!.id}`)).status()).toBe(404);
+    await page.getByTestId("channel-filter-DRAFT").click();
+    await expect(page.getByTestId("bulk-row")).toHaveCount(1);
+    await expect(page.getByTestId("bulk-row")).toContainText(shown.title);
+    await page.getByTestId("channel-filter-PUBLISHED").click();
+    await expect(page.getByTestId("bulk-row")).toHaveCount(1);
+    await expect(page.getByTestId("bulk-row")).toContainText(other.title);
   });
 
-  test("won't let an already imported video be selected again", async ({ page, baseURL }) => {
+  test("shows a first fetch in progress, and stops following only after confirming", async ({ page, baseURL }) => {
     await signIn(page, "ADMIN", baseURL!);
-    const { job, candidates } = await seedJob("IMPORT", 2);
-    await prisma.importCandidate.update({ where: { id: candidates[1]!.id }, data: { alreadyImported: true } });
-    await page.goto(`/admin/youtube-importer/${job.id}`);
+    const channel = await seedChannel({ isBackfillComplete: false });
+    await page.goto(`/admin/sources?query=${encodeURIComponent(channel.title)}`);
+    const row = page.getByTestId("source-channel").filter({ hasText: channel.title });
+    await expect(row.getByRole("progressbar")).toBeVisible();
+    await expect(row).toContainText("جُلب 0 من نحو 10");
 
-    await page.getByTestId("import-filter-imported").click();
-    await expect(page.getByTestId("candidate")).toHaveCount(1);
-    await expect(page.getByTestId("candidate").getByTestId("candidate-check")).toBeDisabled();
+    await row.getByTestId("channel-menu").click();
+    await page.getByTestId("channel-unfollow").click();
+    await expect(page.getByTestId("confirm-dialog")).toBeVisible();
+    await page.getByTestId("confirm-yes").click();
+    await expect.poll(async () => (await prisma.youTubeChannel.findUniqueOrThrow({ where: { id: channel.id } })).isFollowed).toBe(false);
+    expect(await prisma.auditLog.count({ where: { action: "source.unfollow_channel", entityId: channel.id } })).toBe(1);
+
+    await page.goto("/admin/sources");
+    await page.getByTestId("unfollowed-channels").locator("summary").click();
+    await expect(page.getByTestId("unfollowed-list")).toContainText(channel.title);
   });
 
-  test("resumes after closing the page, and survives a reload", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { job } = await seedJob();
-    await page.goto(`/admin/youtube-importer/${job.id}`);
-    await page.getByTestId("select-all").click();
-    await expect(page.getByTestId("import-start")).toContainText("(3)");
-
-    await page.goto("/admin/youtube-importer");
-    await page.getByTestId("job-list").getByRole("link").first().click();
-    await expect(page.getByTestId("import-start")).toContainText("(3)");
-  });
-
-  test("asks before cancelling, and keeps what's done", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { job } = await seedJob();
-    await page.goto(`/admin/youtube-importer/${job.id}`);
-
-    await page.getByTestId("job-cancel").click();
-    await expect(page.getByTestId("cancel-dialog")).toBeVisible();
-    await page.getByTestId("cancel-confirm").click();
-    await expect(page.getByTestId("job-status")).toHaveAttribute("data-status", "CANCELLED");
-    await expect(page.getByTestId("import-start")).toHaveCount(0);
-    await expect(page.getByTestId("job-cancel")).toHaveCount(0);
-  });
-
-  test("a job's page shows real facts, and links to the channel and each video on YouTube", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { job, candidates } = await seedJob();
-    await page.goto(`/admin/youtube-importer/${job.id}`);
-
-    await expect(page.getByTestId("count-discovered")).toHaveText("3");
-    await expect(page.getByTestId("channel-link")).toHaveAttribute("href", /youtube\.com\/channel\//);
-    await expect(page.getByTestId("candidate-watch").first()).toHaveAttribute("href", new RegExp(candidates[0]!.youtubeVideoId));
-    await expect(page.getByTestId("import-filter-all")).toContainText("3");
-  });
-
-  test("a paused job explains itself, and offers to resume", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { job } = await seedJob();
-    await prisma.importJob.update({ where: { id: job.id }, data: { status: "PAUSED", errors: [{ stage: "youtube", message: "نفدت حصة YouTube لهذا اليوم", occurredAt: new Date() }] } });
-    await page.goto(`/admin/youtube-importer/${job.id}`);
-
-    await expect(page.getByTestId("job-notice")).toContainText("نفدت حصة");
-    await expect(page.getByTestId("job-resume")).toBeVisible();
-  });
-
-  const rowFor = async (page: Page, channelId: string) => {
-    const { title } = await prisma.youTubeChannel.findUniqueOrThrow({ where: { id: channelId }, select: { title: true } });
-    return page.getByTestId("job-row").filter({ hasText: title });
-  };
-
-  test("the list pauses a job without asking, and it can be resumed", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { job } = await seedJob();
-    await prisma.importJob.update({ where: { id: job.id }, data: { status: "PAUSED" } });
-    await page.goto("/admin/youtube-importer");
-    const row = await rowFor(page, job.channelId);
-
-    // The API is off here, so resuming ends up paused again, with the reason. It did try.
-    await row.getByTestId("job-retry").click();
-    await expect(row.getByTestId("job-failure")).toBeVisible({ timeout: 20_000 });
-    expect(await prisma.auditLog.count({ where: { action: "import.resume", entityId: job.id } })).toBe(1);
-  });
-
-  test("a cancelled job offers to continue, on the list and on its page", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { job } = await seedJob();
-    await prisma.importJob.update({ where: { id: job.id }, data: { status: "CANCELLED", cancelRequestedAt: new Date(), completedAt: new Date() } });
-    await page.goto("/admin/youtube-importer");
-    await expect((await rowFor(page, job.channelId)).getByTestId("job-retry")).toBeVisible();
-
-    await page.goto(`/admin/youtube-importer/${job.id}`);
-    await expect(page.getByTestId("job-resume")).toBeVisible();
-  });
-
-  test("the list deletes a job and its preview, in any state", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { job } = await seedJob();
-    await page.goto("/admin/youtube-importer");
-    const row = await rowFor(page, job.channelId);
-
-    await row.getByTestId("job-delete").click();
-    await page.getByTestId("job-action-confirm").click();
-    await expect(row).toHaveCount(0);
-    expect(await prisma.importJob.count({ where: { id: job.id } })).toBe(0);
-    expect(await prisma.importCandidate.count({ where: { jobId: job.id } })).toBe(0);
-  });
-
-  test("a job's own page can delete it", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { job } = await seedJob();
-    await page.goto(`/admin/youtube-importer/${job.id}`);
-    await page.getByTestId("job-delete").click();
-    await page.getByTestId("delete-confirm").click();
-    await expect(page).toHaveURL(/\/admin\/youtube-importer$/);
-    expect(await prisma.importJob.count({ where: { id: job.id } })).toBe(0);
-  });
-
-  test("the list takes up an unfinished job, and reports honestly when it can't continue", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { job } = await seedJob();
-    await prisma.importJob.update({ where: { id: job.id }, data: { status: "DISCOVERING", nextPageToken: "next" } });
-    await page.goto("/admin/youtube-importer");
-    const row = await rowFor(page, job.channelId);
-
-    // The API is off in these tests, so the step fails. The point is what the page then says.
-    await expect(row.getByTestId("job-failure")).toBeVisible({ timeout: 20_000 });
-    await expect(row.locator('[data-activity="RUNNING_HERE"]')).toHaveCount(0);
-    await expect(row.getByTestId("job-retry")).toBeVisible();
-    expect((await prisma.importJob.findUniqueOrThrow({ where: { id: job.id } })).status).toBe("PAUSED");
-  });
-
-  test("explains why it's unavailable with no API key", async ({ page, baseURL }) => {
+  test("the old importer and channel pages lead to sources", async ({ page, baseURL }) => {
     await signIn(page, "ADMIN", baseURL!);
     await page.goto("/admin/youtube-importer");
-    await expect(page.getByTestId("importer-unavailable")).toContainText("مفتاح YouTube API");
-    await expect(page.getByTestId("channel-input")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/admin\/sources$/);
+    await page.goto("/admin/channels");
+    await expect(page).toHaveURL(/\/admin\/sources$/);
+    await expect(page.getByRole("navigation", { name: "تنقل لوحة التحكم" }).getByRole("link", { name: "مصادر المحتوى" })).toBeVisible();
   });
 
-  test("is closed to staff without the permission", async ({ page, baseURL }) => {
+  test("is closed to people who can't publish", async ({ page, baseURL }) => {
     await signIn(page, "EDITOR", baseURL!);
-    const { job } = await seedJob();
-    await page.goto("/admin/youtube-importer");
-    await expect(page.getByRole("heading", { name: "ليست لديك صلاحية الوصول" })).toBeVisible();
-    await page.goto(`/admin/youtube-importer/${job.id}`);
-    await expect(page.getByTestId("import-workspace")).toHaveCount(0);
-    await expect(page.getByRole("navigation", { name: "تنقل لوحة التحكم" }).getByRole("link", { name: "مستورد قنوات YouTube" })).toHaveCount(0);
-  });
-
-  test("the channels page lists channels, and sync explains why it's off", async ({ page, baseURL }) => {
-    await signIn(page, "ADMIN", baseURL!);
-    const { channel } = await seedJob();
-    await page.goto(`/admin/channels?query=${encodeURIComponent(channel.title)}`);
-    const row = page.getByTestId("channel-row");
-    await expect(row).toContainText(channel.title);
-    await expect(row.getByTestId("channel-sync")).toBeDisabled();
-    await expect(page.getByText("مفتاح YouTube API لم يُضبط بعد")).toBeVisible();
-
-    await row.getByTestId("channel-toggle").click();
-    await expect(row).toContainText("غير نشطة");
+    await page.goto("/admin/sources");
+    await expect(page.getByTestId("add-source")).toHaveCount(0);
+    await expect(page.getByRole("navigation", { name: "تنقل لوحة التحكم" }).getByRole("link", { name: "مصادر المحتوى" })).toHaveCount(0);
   });
 
   test("a channel's topics decide where its videos appear, seen from both sides", async ({ page, baseURL }) => {
@@ -269,8 +131,8 @@ test.describe("the YouTube importer", () => {
     const topic = await prisma.topic.create({ data: { title, titleSearch: title, slug: `channel-link-${id}`, status: "PUBLISHED", publishedAt: new Date() } });
     const video = await seedVideo({ status: "PUBLISHED", reviewedAt: new Date(), publishedAt: new Date(), channelId: channel.id });
     const openChannelTopics = async () => {
-      await page.goto(`/admin/channels?query=${encodeURIComponent(channel.title)}`);
-      await page.getByTestId("channel-row").getByTestId("channel-topics-toggle").click();
+      await page.goto(`/admin/sources/channels/${channel.id}`);
+      await page.getByTestId("channel-topics-toggle").click();
       return page.getByTestId("links-channel.topic");
     };
 
@@ -287,7 +149,7 @@ test.describe("the YouTube importer", () => {
       expect(await prisma.auditLog.count({ where: { action: "link.add", entityId: channel.id } })).toBe(1);
 
       await page.reload();
-      await expect(page.getByTestId("channel-row").getByTestId("channel-topics")).toContainText(title);
+      await expect(page.getByTestId("channel-topics")).toContainText(title);
 
       await page.goto(`/topics/${topic.slug}`);
       await expect(page.getByTestId("section-shorts").getByText(video.title)).toBeVisible();
@@ -611,11 +473,11 @@ test.describe("layout and accessibility", () => {
   test("new screens fit a phone, with no accessibility violations", async ({ page, baseURL }) => {
     test.setTimeout(150_000);
     await signIn(page, "SUPER_ADMIN", baseURL!);
-    const { job } = await seedJob();
-    const video = await seedVideo();
+    const channel = await seedChannel({ isBackfillComplete: false });
+    const video = await seedVideo({ channelId: channel.id });
     await page.setViewportSize({ width: 360, height: 740 });
 
-    for (const path of ["/admin", "/admin/shorts", `/admin/shorts/${video.id}`, "/admin/youtube-importer", `/admin/youtube-importer/${job.id}`, "/admin/channels", "/admin/users", "/admin/audit-logs", "/admin/settings", "/admin/youtube-status"]) {
+    for (const path of ["/admin", "/admin/shorts", `/admin/shorts/${video.id}`, "/admin/sources", "/admin/sources?tab=playlists", `/admin/sources/channels/${channel.id}`, "/admin/users", "/admin/audit-logs", "/admin/settings", "/admin/youtube-status"]) {
       await page.goto(path);
       await page.waitForLoadState("networkidle");
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), path).toBeLessThanOrEqual(0);
@@ -626,7 +488,7 @@ test.describe("layout and accessibility", () => {
 
   test("dashboard pages are never indexed", async ({ page, baseURL }) => {
     await signIn(page, "ADMIN", baseURL!);
-    for (const path of ["/admin/shorts", "/admin/users", "/admin/audit-logs", "/admin/youtube-importer"]) {
+    for (const path of ["/admin/shorts", "/admin/users", "/admin/audit-logs", "/admin/sources"]) {
       expect((await page.request.get(path)).headers()["x-robots-tag"], path).toContain("noindex");
     }
   });

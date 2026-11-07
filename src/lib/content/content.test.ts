@@ -153,3 +153,78 @@ describe("document analysis", () => {
     expect(isDocumentEmpty(typed(figure({ src: "/media/a.webp" })))).toBe(false);
   });
 });
+
+describe("sanitizeDocument: richer formatting", () => {
+  const cell = (type: string, value: string, attrs: Record<string, unknown> = {}) => ({ type, attrs, content: [paragraph(text(value))] });
+
+  it("keeps underline, strike, and one highlight colour, never a stored colour", () => {
+    const clean = sanitizeDocument(doc(paragraph(text("x", [{ type: "underline" }, { type: "strike" }, { type: "highlight", attrs: { color: "red; background:url(x)" } }]))));
+    expect(clean).toEqual(doc(paragraph(text("x", [{ type: "underline" }, { type: "strike" }, { type: "highlight" }]))));
+  });
+
+  it("keeps logical alignment only, and drops start, which is the default", () => {
+    const clean = sanitizeDocument(
+      doc(
+        { type: "paragraph", attrs: { textAlign: "center" }, content: [text("أ")] },
+        { type: "paragraph", attrs: { textAlign: "left" }, content: [text("ب")] },
+        { type: "paragraph", attrs: { textAlign: "start" }, content: [text("ج")] },
+        { type: "heading", attrs: { level: 2, textAlign: "justify" }, content: [text("د")] },
+      ),
+    );
+    expect(clean.content).toEqual([
+      { type: "paragraph", attrs: { textAlign: "center" }, content: [text("أ")] },
+      paragraph(text("ب")),
+      paragraph(text("ج")),
+      { type: "heading", attrs: { level: 2, textAlign: "justify" }, content: [text("د")] },
+    ]);
+  });
+
+  it("keeps a callout's known variant, falls back to a note, and never nests boxes or tables in one", () => {
+    const clean = sanitizeDocument(
+      doc(
+        { type: "callout", attrs: { variant: "ayah", onclick: "x" }, content: [paragraph(text("آية"))] },
+        { type: "callout", attrs: { variant: "<script>" }, content: [paragraph(text("أ")), { type: "callout", attrs: { variant: "note" }, content: [paragraph(text("ب"))] }] },
+        { type: "callout", attrs: { variant: "note" }, content: [] },
+      ),
+    );
+    expect(clean.content).toEqual([
+      { type: "callout", attrs: { variant: "ayah" }, content: [paragraph(text("آية"))] },
+      { type: "callout", attrs: { variant: "note" }, content: [paragraph(text("أ"))] },
+    ]);
+  });
+
+  it("keeps tables with bounded spans, text-only cells, and no stray rows or cells", () => {
+    const clean = sanitizeDocument(
+      doc({
+        type: "table",
+        attrs: { style: "x" },
+        content: [
+          { type: "tableRow", content: [cell("tableHeader", "أ", { colspan: 2, style: "x" }), cell("tableHeader", "ب", { colspan: 999 })] },
+          { type: "tableRow", content: [{ type: "tableCell", attrs: { rowspan: 2 }, content: [{ type: "table", content: [] }, paragraph(text("ج"))] }, { type: "image", attrs: {} }] },
+          { type: "paragraph", content: [text("ليس صفًا")] },
+        ],
+      }),
+    );
+    expect(clean.content).toEqual([
+      {
+        type: "table",
+        content: [
+          { type: "tableRow", content: [{ type: "tableHeader", attrs: { colspan: 2, rowspan: 1 }, content: [paragraph(text("أ"))] }, { type: "tableHeader", attrs: { colspan: 1, rowspan: 1 }, content: [paragraph(text("ب"))] }] },
+          { type: "tableRow", content: [{ type: "tableCell", attrs: { colspan: 1, rowspan: 2 }, content: [paragraph(text("ج"))] }] },
+        ],
+      },
+    ]);
+  });
+
+  it("reads headings, text, and footnotes inside callouts and tables", () => {
+    const clean = sanitizeDocument(
+      doc(
+        { type: "callout", attrs: { variant: "benefit" }, content: [{ type: "heading", attrs: { level: 3 }, content: [text("فائدة")] }, paragraph(text("نص"), { type: "footnote", attrs: { text: "هامش" } })] },
+        { type: "table", content: [{ type: "tableRow", content: [cell("tableCell", "خلية")] }] },
+      ),
+    );
+    expect(extractHeadings(clean).map((item) => item.text)).toEqual(["فائدة"]);
+    expect(extractPlainText(clean)).toBe("فائدة نص خلية");
+    expect(collectFootnotes(clean)).toEqual([{ number: 1, text: "هامش" }]);
+  });
+});

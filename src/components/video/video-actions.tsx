@@ -20,7 +20,7 @@ interface SaveButtonProps {
 }
 
 /** A guest gets a link to the optional sign-in, and never a dialog in the way. */
-export function SaveButton({ videoId, content, isSaved, callbackPath, onChange, onFailure }: SaveButtonProps) {
+export function SaveButton({ videoId, content, isSaved, callbackPath, onChange, onFailure, withLabel = false }: SaveButtonProps & { withLabel?: boolean }) {
   const { status } = useSession();
   const [isBusy, setIsBusy] = useState(false);
 
@@ -57,13 +57,14 @@ export function SaveButton({ videoId, content, isSaved, callbackPath, onChange, 
   const Icon = isSaved ? BookmarkCheck : Bookmark;
 
   return (
-    <Button variant="ghost" size="icon" aria-label={label} aria-pressed={isSaved} title={label} disabled={isBusy} onClick={toggle} data-testid="save">
-      <Icon aria-hidden className={isSaved ? "text-brand" : undefined} />
+    <Button variant={withLabel ? "secondary" : "ghost"} size={withLabel ? "default" : "icon"} aria-label={withLabel ? undefined : label} aria-pressed={isSaved} title={label} disabled={isBusy} onClick={toggle} className={withLabel ? "rounded-full" : undefined} data-testid="save">
+      <Icon aria-hidden data-icon={withLabel ? "inline-start" : undefined} className={isSaved ? "text-brand" : undefined} />
+      {withLabel ? label : null}
     </Button>
   );
 }
 
-export function ShareButton({ path, title, onResult }: { path: string; title: string; onResult: (message: string) => void }) {
+export function ShareButton({ path, title, onResult, withLabel = false }: { path: string; title: string; onResult: (message: string) => void; withLabel?: boolean }) {
   const share = async () => {
     const url = `${window.location.origin}${path}`;
     try {
@@ -80,8 +81,9 @@ export function ShareButton({ path, title, onResult }: { path: string; title: st
   };
 
   return (
-    <Button variant="ghost" size="icon" aria-label={strings.feed.share} title={strings.feed.share} onClick={share} data-testid="share">
-      <Share2 aria-hidden />
+    <Button variant={withLabel ? "secondary" : "ghost"} size={withLabel ? "default" : "icon"} aria-label={withLabel ? undefined : strings.feed.share} title={strings.feed.share} onClick={share} className={withLabel ? "rounded-full" : undefined} data-testid="share">
+      <Share2 aria-hidden data-icon={withLabel ? "inline-start" : undefined} />
+      {withLabel ? strings.feed.share : null}
     </Button>
   );
 }

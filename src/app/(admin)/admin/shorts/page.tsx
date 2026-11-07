@@ -41,9 +41,9 @@ export default async function AdminShortsPage({ searchParams }: PageProps) {
     <div className="mx-auto w-full max-w-5xl space-y-5 px-4 py-8">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold">{strings.admin.shorts}</h1>
-        {hasPermission(actor, "youtube.import") ? (
+        {hasPermission(actor, "youtube.import") && hasPermission(actor, "content.publish") ? (
           <Button asChild>
-            <Link href="/admin/youtube-importer">{strings.importer.title}</Link>
+            <Link href="/admin/sources">{strings.sources.title}</Link>
           </Button>
         ) : null}
       </header>

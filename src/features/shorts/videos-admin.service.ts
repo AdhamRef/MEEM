@@ -21,13 +21,15 @@ const listSchema = z.strictObject({
   kind: z.enum(["SHORT", "LONG_FORM"]).optional(),
   status: z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]).optional(),
   review: z.enum(["NEEDS_REVIEW", "REVIEWED"]).optional(),
+  channelId: objectIdSchema.optional(),
   cursor: z.string().optional(),
 });
 
 /** One definition, so "everything this filter matches" can't differ from what the list shows. */
-function videoFilterWhere({ query, kind, status, review }: z.infer<typeof listSchema>): Prisma.VideoWhereInput {
+function videoFilterWhere({ query, kind, status, review, channelId }: z.infer<typeof listSchema>): Prisma.VideoWhereInput {
   const search = query ? normalizeArabicForSearch(query) : "";
   return {
+    ...(channelId ? { channelId } : {}),
     ...(search ? { titleSearch: { contains: search } } : {}),
     ...(kind ? { kind } : {}),
     ...(status === "ARCHIVED" ? { isArchived: true } : { isArchived: false, ...(status ? { status } : {}) }),

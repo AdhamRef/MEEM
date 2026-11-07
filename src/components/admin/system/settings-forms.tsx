@@ -116,6 +116,8 @@ export function YouTubeSettingsForm({ initial }: { initial: YouTubeSettings }) {
   const [maxShort, setMaxShort] = useState(String(initial.maxShortSeconds));
   const [refreshAfter, setRefreshAfter] = useState(String(initial.refreshAfterDays));
   const [batches, setBatches] = useState(String(initial.refreshBatchesPerRun));
+  const [autoCheck, setAutoCheck] = useState(initial.autoCheckEnabled);
+  const [ceiling, setCeiling] = useState(String(initial.autoCheckQuotaCeiling));
 
   return (
     <section className="space-y-4 rounded-xl border bg-surface p-4" data-testid="youtube-settings">
@@ -124,11 +126,19 @@ export function YouTubeSettingsForm({ initial }: { initial: YouTubeSettings }) {
         <NumberField label={s.maxShort} hint={s.maxShortHint} value={maxShort} onChange={setMaxShort} testId="max-short" />
         <NumberField label={s.refreshAfter} hint={s.refreshAfterHint} value={refreshAfter} onChange={setRefreshAfter} testId="refresh-after" />
         <NumberField label={s.batches} hint={s.batchesHint} value={batches} onChange={setBatches} />
+        <NumberField label={s.autoCheckCeiling} hint={s.autoCheckCeilingHint} value={ceiling} onChange={setCeiling} testId="auto-check-ceiling" />
       </div>
+      <label className="flex min-h-11 items-center gap-3 text-sm">
+        <input type="checkbox" checked={autoCheck} onChange={(event) => setAutoCheck(event.target.checked)} className="size-4" data-testid="auto-check-enabled" />
+        <span>
+          <span className="font-medium">{s.autoCheck}</span>
+          <span className="block text-xs text-text-secondary">{s.autoCheckHint}</span>
+        </span>
+      </label>
       <p className="text-sm text-text-secondary" data-testid="statistics-note">
         {s.statisticsNote}
       </p>
-      <SaveRow isBusy={isBusy} message={message} testId="youtube-save" onSave={() => save(() => updateYouTubeSettingsAction({ maxShortSeconds: Number(maxShort), refreshAfterDays: Number(refreshAfter), refreshBatchesPerRun: Number(batches) }))} />
+      <SaveRow isBusy={isBusy} message={message} testId="youtube-save" onSave={() => save(() => updateYouTubeSettingsAction({ maxShortSeconds: Number(maxShort), refreshAfterDays: Number(refreshAfter), refreshBatchesPerRun: Number(batches), autoCheckEnabled: autoCheck, autoCheckQuotaCeiling: Number(ceiling) }))} />
     </section>
   );
 }

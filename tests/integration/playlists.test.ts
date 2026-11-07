@@ -324,7 +324,7 @@ describe("permissions", () => {
 });
 
 describe("importing a YouTube playlist", () => {
-  it("stores its details exactly as returned, and its videos in order as drafts", async () => {
+  it("stores its details exactly as returned, and its videos in order, published (plan D10)", async () => {
     const videoIds = ids(3);
     mockYouTube({ title: "سلسلة YouTube", videoIds });
 
@@ -337,7 +337,7 @@ describe("importing a YouTube playlist", () => {
     const items = await prisma.playlistItem.findMany({ where: { playlistId: id }, orderBy: { position: "asc" }, include: { video: true } });
     expect(items.map((item) => item.video.youtubeVideoId)).toEqual(videoIds);
     // Nothing reaches the feed by being in a playlist.
-    expect(items.every((item) => item.video.status === "DRAFT" && item.video.reviewedAt === null)).toBe(true);
+    expect(items.every((item) => item.video.status === "PUBLISHED" && item.video.reviewedAt === null)).toBe(true);
   });
 
   it("sends only the validated ID to YouTube", async () => {
@@ -503,13 +503,13 @@ describe("syncing a YouTube playlist", () => {
     expect((await prisma.playlist.findUniqueOrThrow({ where: { id } })).title).toBe("الأصل");
   });
 
-  it("shows every available item of a published YouTube playlist, with its videos staying out of other pages", async () => {
+  it("shows every available item of a published YouTube playlist, and its videos are published elsewhere too (plan D10)", async () => {
     const id = await imported(ids(2));
     const live = await setPlaylistPublished(admin, id, true);
 
     const page = await getPublishedPlaylistBySlug(live.slug);
     expect(page!.items).toHaveLength(2);
-    expect(await getPublicVideo(page!.items[0]!.videoId)).toBeNull();
+    expect(await getPublicVideo(page!.items[0]!.videoId)).not.toBeNull();
   });
 });
 

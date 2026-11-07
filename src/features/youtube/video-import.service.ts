@@ -36,11 +36,13 @@ async function findOrCreateChannel(video: NormalizedVideo, now: Date, known: Map
 }
 
 /**
- * Stores new videos as drafts, so nothing is published without a person reviewing it.
- * IDs already stored cost no API call. The unique index catches anything imported at the
- * same moment, because createMany has no skipDuplicates on MongoDB.
+ * Stores new videos. They are published straight away when `publish` is set, which is how
+ * sources work by the owner's decision (plan D10), and drafts otherwise. A video already stored
+ * is never touched, so one someone hid stays hidden. IDs already stored cost no API call. The
+ * unique index catches anything imported at the same moment, because createMany has no
+ * skipDuplicates on MongoDB.
  */
-export async function importVideosByInput(inputs: string[], createdById?: string): Promise<VideoImportReport> {
+export async function importVideosByInput(inputs: string[], createdById?: string, options: { publish?: boolean } = {}): Promise<VideoImportReport> {
   const report: VideoImportReport = { imported: [], duplicates: [], notFound: [], invalid: [] };
 
   const ids = new Set<string>();
@@ -74,7 +76,8 @@ export async function importVideosByInput(inputs: string[], createdById?: string
             youtubeVideoId: video.youtubeVideoId,
             classification,
             kind: classification === "SHORT_CANDIDATE" ? "SHORT" : "LONG_FORM",
-            status: "DRAFT",
+            status: options.publish ? "PUBLISHED" : "DRAFT",
+            publishedAt: options.publish ? now : null,
             feedKey: randomInt(MAX_FEED_KEY),
             channelId: await findOrCreateChannel(video, now, knownChannels),
             createdById,

@@ -34,11 +34,23 @@ Please also try the real feed on each phone, with a few videos published, and te
 
 - [x] YouTube API key added to `.env`. It works: importing, refreshing, comments, and playlists all ran against the real API.
 - [ ] Send me **a few real Short URLs** from channels you intend to use. Only real vertical Shorts can finish the vertical-video test.
-- [ ] Once signed in as super admin, try the importer at `/admin/youtube-importer` on a real channel. It's the one thing in Phase 7 that hasn't run for real, so tell me how it goes, including any wrong numbers or confusing steps. This is also how to fill your feed: import, then publish from `/admin/shorts`.
+- [ ] **Try Content sources on a real channel**, at `/admin/sources` (plan D10). Paste a channel link and keep the page open while it fills. Tell me how long it took, and anything that looked wrong. This is now the whole way to fill the feed: nothing needs publishing by hand.
+- [ ] **Follow your existing channels.** Channels imported the old way are listed under **قنوات محفوظة غير متابَعة** on that page. Press **تابِع** on each one you want checked hourly. Following one also publishes any of its uploads not yet on the site. Videos left as drafts by the old importer show as hidden on the channel's page, where you can select them all and press **نشر**.
+
+### Turn on the hourly check
+
+Without this, new videos arrive only while someone has the Sources page open, or presses **افحص الآن**. It also runs the daily 30-day refresh, which replaces the "daily scheduled call" item further down.
+
+- [ ] Choose a long random value for `CRON_SECRET`, and add it to the site's environment variables on Vercel. Redeploy afterwards.
+- [ ] In the GitHub repository, open **Settings → Secrets and variables → Actions** and add two repository secrets: `CRON_SECRET` with the same value, and `SITE_URL` with `https://meeem-app.vercel.app`, without a trailing slash.
+- [ ] Push `.github/workflows/youtube-schedule.yml` (nothing is committed yet), then, under **Actions → YouTube schedule**, press **Run workflow** once and check that it succeeds. After that it runs every hour by itself.
+- [ ] Each run is set to finish within 60 seconds. If one fails with a timeout, tell me.
+
+GitHub may run scheduled workflows a few minutes late, and pauses them in a repository with no activity for 60 days. Each run's result shows in the Actions tab, and the time of the last one shows on the Sources page.
 
 ### After pulling the feed update
 
-- [ ] **`npm run db:sync` can't finish on your Atlas database yet.** It stops at duplicate import previews, in `ImportCandidate`, so required unique indexes are missing. Search and the feed already work: I created those indexes separately on 2026-11-06. The duplicates need removing once no import is running.
+- [ ] **Finish `npm run db:sync` on your Atlas database.** On 2026-11-07 I removed the duplicate import previews and one duplicate rate-limit row, and the schema push now succeeds. The last step stops on 3 duplicate rows of viewing history in `UserActivity`. To finish, run `npx tsx --env-file=.env scripts/database/_tmp-dedupe-views.ts --apply`, delete that script, and run `npm run db:sync` again. It also adds the new Sources fields.
 - [ ] **Never run `prisma db push` alone.** It deletes the search indexes, and every search then fails with an unexpected error.
 
 ### 3. Finish Google sign-in
@@ -61,7 +73,7 @@ Your credentials are in `.env`, but only you can complete a real sign-in, becaus
 - [x] **Logo and favicon:** `public/logo.png`, supplied 2026-11-05. An SVG would stay sharper at large sizes, if one exists.
 - [ ] **Give your channels their topics.** This is what turns on the first-visit choices. Until a channel has a topic, nobody can choose it, and the feed works as it does today.
   1. Run `npm run db:sync`, then `npm run db:seed-taxonomy`, which adds the 12 starting topics. If `db:sync` stops on duplicate import previews, as it did before, tell me.
-  2. In `/admin/channels`, press **تعديل الموضوعات** on each of your 8 channels and pick its topics.
+  2. In `/admin/sources`, open each of your channels, press **تعديل الموضوعات**, and pick its topics.
   3. Change, rename, or remove the starting topics in `/admin/topics` to suit you.
 - [ ] **Try the first visit.** Open the home page in a private window, on a phone if you can, and tell me how the topics and channels screens feel.
 
@@ -120,7 +132,7 @@ Tell me your choices, and I'll write the exact setup steps for them.
 - [ ] **Domain name**
 - [ ] **MongoDB Atlas**, or another MongoDB replica set: its connection string goes in `DATABASE_URL`
 - [ ] **Image storage**, if your host doesn't keep files: any S3-compatible provider, such as Cloudflare R2 or AWS S3. Add a bucket with public read access, then set `STORAGE_PROVIDER=s3` and its details from `.env.example`.
-- [ ] **A daily scheduled call** to `/api/cron/youtube-refresh`, with `CRON_SECRET` set. **Without this, videos leave the site after 30 days**, because YouTube requires it.
+- [ ] **A daily scheduled call** to `/api/cron/youtube-refresh`, with `CRON_SECRET` set. **Without this, videos leave the site after 30 days**, because YouTube requires it. The GitHub schedule in "Turn on the hourly check" above does this, so this item is done with it.
 - [ ] **Production Google sign-in:** add the real domain's redirect URI, and publish the consent screen so anyone can sign in
 - [ ] **Backups** of the database, which your database host can usually schedule
 

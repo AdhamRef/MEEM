@@ -325,7 +325,7 @@ test.describe("no dead controls", () => {
     test.setTimeout(240_000);
     await signIn(page, "SUPER_ADMIN", baseURL!);
     const visited = new Map<string, number>();
-    for (const path of ["/admin", "/admin/shorts", "/admin/youtube-importer", "/admin/channels", "/admin/articles", "/admin/topics", "/admin/libraries", "/admin/playlists", "/admin/resources", "/admin/collections", "/admin/users", "/admin/audit-logs", "/admin/settings", "/admin/youtube-status"]) {
+    for (const path of ["/admin", "/admin/shorts", "/admin/sources", "/admin/sources?tab=playlists", "/admin/articles", "/admin/topics", "/admin/libraries", "/admin/playlists", "/admin/resources", "/admin/collections", "/admin/users", "/admin/audit-logs", "/admin/settings", "/admin/youtube-status"]) {
       await checkPage(page, path, visited);
     }
   });

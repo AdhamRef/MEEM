@@ -80,7 +80,7 @@ Never run an unpinned install or upgrade of these. The plan explains why in sect
 - Stored API data must be refreshed or removed within 30 days, including statistics and import previews, and videos must be checked for deletion every 30 days.
 - Statistics are on by the owner's decision of 2026-11-06, read only from what the importer and refresh job store, and must be reviewed before the compliance audit. They are never fetched live, used for ranking, or fabricated.
 - Comments are read-only, labelled as YouTube comments, and not stored. Request no YouTube OAuth scopes.
-- Shorts detection produces *candidates* for human review. Don't auto-publish them or use undocumented detection tricks.
+- Shorts detection gives a suggested kind, never a claim, and uses no undocumented detection tricks. **By the owner's decision of 2026-11-07 (plan D10), content from followed sources is published automatically**, with the suggested kind, and admins hide or reclassify it afterwards. The hourly check must stay configurable, quota-aware, and switchable off. Nothing else is published without a person.
 - Enumerate channel uploads through the uploads playlist, batch requests, and never retry `quotaExceeded`.
 - **The API Compliance Audit (plan item R1) must be addressed before public launch.**
 

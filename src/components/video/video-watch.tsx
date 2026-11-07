@@ -1,10 +1,12 @@
 "use client";
 
-import { ExternalLink, RotateCcw } from "lucide-react";
+/* eslint-disable @next/next/no-img-element -- Channel images load directly from YouTube by design. */
+import { ExternalLink, Keyboard, RectangleHorizontal, RotateCcw, Square, Tv } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Badge } from "@/components/ui/badge";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ExploreShortCard } from "@/components/explore/explore-cards";
 import { Button } from "@/components/ui/button";
 import { FEED_IMMERSIVE_OVERLAY } from "@/config/feed";
 import { strings } from "@/config/strings.ar";
@@ -12,32 +14,101 @@ import { recordGuestSignal } from "@/features/recommendations/guest-signals";
 import { useRecordView } from "@/components/knowledge/view-recorder";
 import { signalFromWatch } from "@/features/recommendations/watch-rules";
 import { formatDuration, resumePosition } from "@/features/playlists/rules";
+import { extractChapters } from "@/features/shorts/description";
 import type { VideoCard } from "@/features/shorts/types";
 import { useActivePlayer } from "@/hooks/useActivePlayer";
 import { cn } from "@/lib/utils";
 import { ImmersiveVideoFrame } from "./immersive-video-frame";
+import { AutoplayCountdown, AutoplaySwitch, UpNextItem } from "./up-next";
 import { SaveButton, ShareButton, YouTubeAttribution } from "./video-actions";
+import { VideoDescription } from "./video-description";
 import { YouTubeComments } from "./youtube-comments";
 
+const w = strings.watch;
+const THEATER_KEY = "watch.theater";
+const AUTOPLAY_KEY = "watch.autoplay";
+const THEATER_WIDTH = "lg:w-[min(100%,calc((100dvh-9rem)*16/9))]";
+
+/** A remembered preference. Storage can be missing or refused, and then the default applies. */
+function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === null ? fallback : value === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeFlag(key: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    // Kept for this visit only.
+  }
+}
+
+interface VideoWatchProps {
+  video: VideoCard;
+  related?: ReactNode;
+  upNext?: VideoCard[];
+  channelShorts?: VideoCard[];
+}
+
 /**
- * One video on its own page. OWNER'S DECISION, 2026-11-06, under the same switch as the feed
- * (FEED_IMMERSIVE_OVERLAY): YouTube's interface is cropped away, our own controls sit over the
- * player, and it starts by itself with sound where the browser allows. With the switch off, it
- * follows YouTube's rules: the player's own controls, and it waits for a click.
+ * One video on its own page, laid out like YouTube's: the player, then its title, channel, actions,
+ * and description, with suggestions beside it on wide screens and below it on phones. Everything
+ * shown is stored data, so the page itself spends no quota. Only comments, opened on request, do.
+ *
+ * OWNER'S DECISION, 2026-11-06, under the same switch as the feed (FEED_IMMERSIVE_OVERLAY):
+ * YouTube's interface is cropped away, our own controls sit over the player, it starts by itself,
+ * and the next video can follow automatically. With the switch off, it follows YouTube's rules:
+ * the player's own controls, waiting for a click, and YouTube's end screen.
  */
-export function VideoWatch({ video, related }: { video: VideoCard; related?: ReactNode }) {
+export function VideoWatch({ video, related, upNext = [], channelShorts = [] }: VideoWatchProps) {
   const { status: sessionStatus } = useSession();
+  const router = useRouter();
+  const [now] = useState(() => new Date());
+  const isLong = video.kind === "LONG_FORM";
   const mountRef = useRef<HTMLDivElement>(null);
   const [isSaved, setIsSaved] = useState(false);
   // A check that was already on its way must not undo what the person just pressed.
   const hasToggledSave = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const isGuestRef = useRef(true);
+  const [isTheater, setIsTheater] = useState(false);
+  const [isAutoplayOn, setIsAutoplayOn] = useState(true);
+  const [isCountdownCancelled, setIsCountdownCancelled] = useState(false);
+  const chapters = useMemo(() => extractChapters(video.description, video.durationSeconds), [video.description, video.durationSeconds]);
   useRecordView("VIDEO", video.id);
 
   useEffect(() => {
     isGuestRef.current = sessionStatus !== "authenticated";
   });
+
+  useEffect(() => {
+    // Read after hydration, so the server's render and the first one in the browser agree.
+    /* eslint-disable react-hooks/set-state-in-effect -- Stored preferences, only readable in the browser. */
+    setIsTheater(readFlag(THEATER_KEY, false));
+    setIsAutoplayOn(readFlag(AUTOPLAY_KEY, true));
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
+
+  const toggleTheater = useCallback(() => {
+    setIsTheater((current) => {
+      writeFlag(THEATER_KEY, !current);
+      return !current;
+    });
+  }, []);
+
+  const changeAutoplay = (next: boolean) => {
+    setIsAutoplayOn(next);
+    writeFlag(AUTOPLAY_KEY, next);
+  };
+
+  const nextVideo = upNext[0];
+  const playNext = useCallback(() => {
+    if (nextVideo) router.push(`/videos/${nextVideo.id}`);
+  }, [nextVideo, router]);
 
   useEffect(() => {
     if (sessionStatus !== "authenticated") return;
@@ -69,7 +140,7 @@ export function VideoWatch({ video, related }: { video: VideoCard; related?: Rea
     [video],
   );
 
-  const { state, errorCode, getPosition, resumeAt, isMuted, toggleSound, togglePlay } = useActivePlayer({
+  const { state, errorCode, getPosition, resumeAt, isMuted, toggleSound, togglePlay, setPlaybackRate } = useActivePlayer({
     mountRef,
     videoId: video.youtubeVideoId,
     isInView: true,
@@ -82,7 +153,7 @@ export function VideoWatch({ video, related }: { video: VideoCard; related?: Rea
   });
 
   // Only long videos: nobody resumes a clip of a minute.
-  const tracksProgress = sessionStatus === "authenticated" && video.kind === "LONG_FORM";
+  const tracksProgress = sessionStatus === "authenticated" && isLong;
   const [resumeSeconds, setResumeSeconds] = useState<number | null>(null);
 
   useEffect(() => {
@@ -117,99 +188,223 @@ export function VideoWatch({ video, related }: { video: VideoCard; related?: Rea
     };
   }, [tracksProgress, state, video.id, getPosition]);
 
+  useEffect(() => {
+    // A new ending gets a new countdown.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting a choice that belongs to one ending.
+    if (state !== "ended") setIsCountdownCancelled(false);
+  }, [state]);
+
   const playerMessage = state === "error" ? (errorCode === null ? strings.feed.playerLoadFailed : strings.feed.playerFailed) : null;
   const ctaLabel = video.cta?.label ?? strings.feed.ctaDefaults[video.cta?.type ?? "EXTERNAL_RESOURCE"];
   const path = `/videos/${video.id}`;
+  const theaterFrame = isTheater && isLong;
+
+  // Only where the owner's exception applies. Elsewhere YouTube's end screen stays, with no auto-skip (R5).
+  const endScreen =
+    FEED_IMMERSIVE_OVERLAY && isAutoplayOn && nextVideo && !isCountdownCancelled ? <AutoplayCountdown next={nextVideo} onPlay={playNext} onCancel={() => setIsCountdownCancelled(true)} /> : undefined;
+
+  const player = FEED_IMMERSIVE_OVERLAY ? (
+    <ImmersiveVideoFrame
+      mountRef={mountRef}
+      video={video}
+      state={state}
+      isMuted={isMuted}
+      getPosition={getPosition}
+      resumeAt={resumeAt}
+      toggleSound={toggleSound}
+      togglePlay={togglePlay}
+      setPlaybackRate={setPlaybackRate}
+      isTheater={theaterFrame}
+      onToggleTheater={isLong ? toggleTheater : undefined}
+      chapters={chapters}
+      endScreen={endScreen}
+      className={theaterFrame ? THEATER_WIDTH : undefined}
+    />
+  ) : (
+    <div
+      ref={mountRef}
+      data-testid="player-mount"
+      className={cn(
+        "mx-auto bg-black",
+        video.kind === "SHORT" ? "aspect-9/16 max-h-[75dvh] min-h-[200px] max-w-full" : "aspect-video min-h-[200px] w-full md:overflow-hidden md:rounded-xl",
+        theaterFrame && cn("md:rounded-none", THEATER_WIDTH),
+      )}
+    />
+  );
+
+  const sidePadding = theaterFrame ? "lg:ps-6 lg:pe-0" : "md:px-0";
+  // The Short shown over another page has no suggestions, and keeps a single column.
+  const hasSide = upNext.length > 0 || channelShorts.length > 0;
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-5 pb-8 md:px-4 md:pt-6">
-      {FEED_IMMERSIVE_OVERLAY ? (
-        <ImmersiveVideoFrame mountRef={mountRef} video={video} state={state} isMuted={isMuted} getPosition={getPosition} resumeAt={resumeAt} toggleSound={toggleSound} togglePlay={togglePlay} />
-      ) : (
-        <div
-          ref={mountRef}
-          data-testid="player-mount"
-          className={cn("mx-auto bg-black", video.kind === "SHORT" ? "aspect-9/16 max-h-[75dvh] min-h-[200px] max-w-full" : "aspect-video min-h-[200px] w-full")}
-        />
-      )}
+    <div className={cn("mx-auto w-full pb-10", theaterFrame ? "max-w-none" : hasSide ? "max-w-[1720px] md:px-4 md:pt-6 lg:px-6" : "max-w-4xl md:px-4 md:pt-6")} data-testid="video-watch" data-theater={theaterFrame || undefined}>
+      {/*
+        One grid, so the player keeps its place in the page and is never remounted when the layout
+        changes. In theater mode it spans both columns on a black band.
+      */}
+      <div className={cn(hasSide && "lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)] lg:gap-x-6", theaterFrame && "lg:gap-y-4")}>
+        <div className={cn("lg:row-start-1", theaterFrame ? "bg-black lg:col-span-2" : "lg:col-start-1")}>{player}</div>
 
-      <div className="space-y-3 px-4 md:px-0">
-        {video.topics.map((topic) => (
-          <Badge key={topic.id} variant="secondary">
-            {topic.title}
-          </Badge>
-        ))}
-        {video.viewCount !== null || video.likeCount !== null || video.commentCount !== null ? (
-          <p className="flex flex-wrap gap-x-4 text-xs text-text-secondary" data-testid="video-statistics">
-            {video.viewCount !== null ? (
-              <span>
-                <bdi>{video.viewCount.toLocaleString("ar")}</bdi> {strings.feed.views}
-              </span>
-            ) : null}
-            {video.likeCount !== null ? (
-              <span>
-                <bdi>{video.likeCount.toLocaleString("ar")}</bdi> {strings.feed.likes}
-              </span>
-            ) : null}
-            {video.commentCount !== null ? (
-              <span>
-                <bdi>{video.commentCount.toLocaleString("ar")}</bdi> {strings.feed.commentsCount}
-              </span>
-            ) : null}
-          </p>
-        ) : null}
-        <h1 dir="auto" className="text-start text-xl leading-snug font-semibold">
-          {video.title}
-        </h1>
-        <YouTubeAttribution youtubeVideoId={video.youtubeVideoId} channelTitle={video.channelTitle} />
+        <div className={cn("min-w-0 space-y-4 px-4 pt-3 lg:col-start-1 lg:row-start-2", sidePadding)}>
+          <h1 dir="auto" className="text-start text-lg leading-snug font-bold sm:text-xl">
+            {video.title}
+          </h1>
 
-        <div role="status" className={cn("text-sm", playerMessage || notice ? "text-text-secondary" : "sr-only")}>
-          {playerMessage ?? notice}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1">
-          <SaveButton videoId={video.id} isSaved={isSaved} callbackPath={path} onChange={(next) => {
-              hasToggledSave.current = true;
-              setIsSaved(next);
-            }} onFailure={setNotice} />
-          <ShareButton path={path} title={video.title} onResult={setNotice} />
-          {resumeSeconds !== null ? (
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => {
-                resumeAt(resumeSeconds);
-                setResumeSeconds(null);
-              }}
-              data-testid="video-resume"
-            >
-              <RotateCcw aria-hidden data-icon="inline-start" />
-              {strings.playlists.resumeFrom} <bdi dir="ltr">{formatDuration(resumeSeconds)}</bdi>
-            </Button>
-          ) : null}
-          {video.cta ? (
-            <Button asChild variant="secondary" data-testid="video-cta">
-              {video.cta.isExternal ? (
-                <a href={video.cta.href} target="_blank" rel="noopener noreferrer">
-                  {ctaLabel}
-                  <ExternalLink aria-hidden data-icon="inline-end" />
-                </a>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              {video.channelImageUrl ? (
+                <img src={video.channelImageUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="size-10 shrink-0 rounded-full bg-surface-elevated object-cover" />
               ) : (
-                <Link href={video.cta.href}>{ctaLabel}</Link>
+                <span aria-hidden className="flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-text-secondary">
+                  <Tv className="size-5" strokeWidth={1.5} />
+                </span>
               )}
-            </Button>
+              <div className="min-w-0">
+                <YouTubeAttribution youtubeVideoId={video.youtubeVideoId} channelTitle={video.channelTitle} />
+                {video.likeCount !== null || video.commentCount !== null ? (
+                  <p className="flex flex-wrap gap-x-3 text-xs text-text-secondary" data-testid="video-statistics">
+                    {video.likeCount !== null ? (
+                      <span>
+                        <bdi>{video.likeCount.toLocaleString("ar")}</bdi> {strings.feed.likes}
+                      </span>
+                    ) : null}
+                    {video.commentCount !== null ? (
+                      <a href="#comments" className="rounded outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
+                        <bdi>{video.commentCount.toLocaleString("ar")}</bdi> {strings.feed.commentsCount}
+                      </a>
+                    ) : null}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <SaveButton
+                withLabel
+                videoId={video.id}
+                isSaved={isSaved}
+                callbackPath={path}
+                onChange={(next) => {
+                  hasToggledSave.current = true;
+                  setIsSaved(next);
+                }}
+                onFailure={setNotice}
+              />
+              <ShareButton withLabel path={path} title={video.title} onResult={setNotice} />
+              {isLong && !FEED_IMMERSIVE_OVERLAY ? (
+                <Button type="button" variant="secondary" className="hidden rounded-full lg:inline-flex" aria-pressed={theaterFrame} onClick={toggleTheater} data-testid="theater-toggle">
+                  {theaterFrame ? <Square aria-hidden data-icon="inline-start" /> : <RectangleHorizontal aria-hidden data-icon="inline-start" />}
+                  {theaterFrame ? w.exitTheater : w.theater}
+                </Button>
+              ) : null}
+              {resumeSeconds !== null ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="rounded-full"
+                  onClick={() => {
+                    resumeAt(resumeSeconds);
+                    setResumeSeconds(null);
+                  }}
+                  data-testid="video-resume"
+                >
+                  <RotateCcw aria-hidden data-icon="inline-start" />
+                  {strings.playlists.resumeFrom} <bdi dir="ltr">{formatDuration(resumeSeconds)}</bdi>
+                </Button>
+              ) : null}
+              {video.cta ? (
+                <Button asChild className="rounded-full" data-testid="video-cta">
+                  {video.cta.isExternal ? (
+                    <a href={video.cta.href} target="_blank" rel="noopener noreferrer">
+                      {ctaLabel}
+                      <ExternalLink aria-hidden data-icon="inline-end" />
+                    </a>
+                  ) : (
+                    <Link href={video.cta.href}>{ctaLabel}</Link>
+                  )}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+
+          <div role="status" className={cn("text-sm", playerMessage || notice ? "text-text-secondary" : "sr-only")}>
+            {playerMessage ?? notice}
+          </div>
+
+          {video.topics.length ? (
+            <ul className="flex flex-wrap gap-2" aria-label={strings.navigation.topics}>
+              {video.topics.map((topic) => (
+                <li key={topic.id}>
+                  <Link href={`/topics/${topic.slug}`} className="inline-flex min-h-9 items-center rounded-full border bg-surface px-3 text-xs font-medium outline-none hover:bg-surface-elevated focus-visible:ring-3 focus-visible:ring-ring/50">
+                    # {topic.title}
+                  </Link>
+                </li>
+              ))}
+            </ul>
           ) : null}
+
+          <VideoDescription
+            description={video.description}
+            durationSeconds={video.durationSeconds}
+            viewCount={video.viewCount}
+            uploadedAt={video.uploadedAt}
+            chapters={chapters}
+            onSeek={state === "error" ? null : resumeAt}
+          />
+
+          {FEED_IMMERSIVE_OVERLAY && isLong ? (
+            <details className="hidden text-xs text-text-secondary lg:block">
+              <summary className="inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                <Keyboard aria-hidden className="size-4" />
+                {w.shortcuts}
+              </summary>
+              <p className="mt-1">{w.shortcutsList}</p>
+            </details>
+          ) : null}
+
+          {related}
         </div>
 
-        {video.description ? (
-          <p dir="auto" className="text-start text-sm whitespace-pre-line text-text-secondary">
-            {video.description}
-          </p>
+        {hasSide ? (
+        <aside
+          aria-labelledby="up-next-title"
+          className={cn("min-w-0 space-y-4 px-4 pt-6 lg:col-start-2", theaterFrame ? "lg:row-span-2 lg:row-start-2 lg:ps-0 lg:pe-6 lg:pt-3" : "lg:row-span-3 lg:row-start-1 lg:px-0 lg:pt-0")}
+          data-testid="up-next"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <h2 id="up-next-title" className="text-base font-semibold">
+              {w.suggested}
+            </h2>
+            {FEED_IMMERSIVE_OVERLAY && nextVideo ? <AutoplaySwitch isOn={isAutoplayOn} onChange={changeAutoplay} /> : null}
+          </div>
+          {upNext.length ? (
+            <ol className="space-y-1" data-testid="up-next-list">
+              {upNext.map((item) => (
+                <UpNextItem key={item.id} video={item} now={now} />
+              ))}
+            </ol>
+          ) : null}
+
+          {channelShorts.length ? (
+            <section aria-labelledby="channel-shorts-title" className="space-y-3 border-t pt-4" data-testid="channel-shorts">
+              <h2 id="channel-shorts-title" className="text-base font-semibold">
+                {w.channelShorts}
+              </h2>
+              <ul className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-2 lg:mx-0 lg:grid lg:grid-cols-3 lg:overflow-visible lg:px-0">
+                {channelShorts.map((short) => (
+                  <li key={short.id} className="w-32 shrink-0 snap-start lg:w-auto">
+                    <ExploreShortCard video={short} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </aside>
         ) : null}
 
-        {related}
-
-        <YouTubeComments videoId={video.id} youtubeVideoId={video.youtubeVideoId} />
+        <div className={cn("min-w-0 px-4 pt-6 lg:col-start-1 lg:row-start-3", sidePadding)}>
+          <YouTubeComments videoId={video.id} youtubeVideoId={video.youtubeVideoId} />
+        </div>
       </div>
     </div>
   );

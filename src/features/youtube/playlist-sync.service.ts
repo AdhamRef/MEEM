@@ -43,10 +43,10 @@ export interface PlaylistSyncReport {
 }
 
 /**
- * Makes a stored playlist match YouTube. New videos become drafts like any import, so they
- * stay out of the feed, search, and topic pages until a person reviews them. They appear only
- * on this playlist's page, because YouTube's own playlist player would show them anyway.
- * Re-running creates no duplicates, and an API failure leaves the stored list as it was.
+ * Makes a stored playlist match YouTube. A playlist is a followed source, so videos it brings
+ * that aren't stored yet are published straight away (plan D10). One already stored keeps its
+ * state, so a hidden video stays hidden. Re-running creates no duplicates, and an API failure
+ * leaves the stored list as it was.
  */
 export async function syncYouTubePlaylist(playlistId: string, createdById: string | undefined, now = new Date()): Promise<PlaylistSyncReport> {
   const playlist = await prisma.playlist.findUniqueOrThrow({ where: { id: playlistId }, select: { youtubePlaylistId: true } });
@@ -64,7 +64,7 @@ export async function syncYouTubePlaylist(playlistId: string, createdById: strin
     }
 
     const { videoIds, isTruncated } = await fetchPlaylistVideoIds(youtubePlaylistId, MAX_YOUTUBE_PLAYLIST_ITEMS);
-    const importReport = await importVideosByInput(videoIds, createdById);
+    const importReport = await importVideosByInput(videoIds, createdById, { publish: true });
 
     const videos = await prisma.video.findMany({ where: { youtubeVideoId: { in: videoIds } }, select: { id: true, youtubeVideoId: true } });
     const idByYouTubeId = new Map(videos.map((video) => [video.youtubeVideoId, video.id]));

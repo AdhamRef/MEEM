@@ -1,7 +1,7 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element -- Thumbnails load directly from YouTube by design, and aren't re-processed or re-hosted. */
-import { Check, ChevronLeft, ChevronRight, ExternalLink, Play, RotateCcw } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, ExternalLink, Play, RectangleHorizontal, RotateCcw, Square } from "lucide-react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -35,6 +35,9 @@ export function PlaylistExperience({ playlistId, youtubePlaylistId, path, items 
   const mountRef = useRef<HTMLDivElement>(null);
   const [progress, setProgress] = useState<ProgressMap>(new Map());
   const [lastVideoId, setLastVideoId] = useState<string | null>(null);
+
+  const [isTheater, setIsTheater] = useState(false);
+  const listRef = useRef<HTMLOListElement>(null);
 
   const videoIdByYouTubeId = useMemo(() => new Map(items.map((item) => [item.youtubeVideoId, item.videoId])), [items]);
   const youtubeVideoIds = useMemo(() => items.map((item) => item.youtubeVideoId), [items]);
@@ -91,13 +94,23 @@ export function PlaylistExperience({ playlistId, youtubePlaylistId, path, items 
   const resumeSeconds = lastItem ? resumePosition(progress.get(lastItem.videoId)) : null;
   const showResume = lastItem && resumeSeconds !== null && lastItem.youtubeVideoId !== currentVideoId;
 
+  // Keeps the playing item in view in the list, as YouTube's playlist panel does, without moving the page.
+  useEffect(() => {
+    const list = listRef.current;
+    const item = list?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (!list || !item) return;
+    list.scrollTo({ top: item.offsetTop - list.offsetTop - 8, behavior: "smooth" });
+  }, [currentVideoId]);
+
   const message = state === "error" ? (errorCode === null ? strings.feed.playerLoadFailed : strings.feed.playerFailed) : state === "ended" ? (next ? p.endedNext : p.endedLast) : null;
 
   return (
-    <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start lg:gap-6" data-testid="playlist-experience">
-      <div className="sticky top-(--top-bar-height) z-10 -mx-4 bg-background md:top-0 md:mx-0 lg:top-6">
-        {/* Kept empty apart from the player. Every control below sits outside it. */}
-        <div ref={mountRef} data-testid="player-mount" className="aspect-video min-h-[200px] w-full bg-black md:rounded-xl md:overflow-hidden" />
+    <div className={cn("lg:grid lg:items-start lg:gap-6", isTheater ? "lg:grid-cols-1" : "lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]")} data-testid="playlist-experience" data-theater={isTheater || undefined}>
+      <div className="sticky top-(--top-bar-height) z-10 -mx-4 bg-background md:top-0 md:mx-0 lg:static">
+        {/* Kept empty apart from the player, with YouTube's own controls. Everything else sits outside it. */}
+        <div className={cn("bg-black md:overflow-hidden md:rounded-xl", isTheater && "lg:rounded-2xl")}>
+          <div ref={mountRef} data-testid="player-mount" className={cn("mx-auto aspect-video min-h-[200px] w-full bg-black", isTheater && "lg:w-[min(100%,calc((100dvh-10rem)*16/9))]")} />
+        </div>
 
         <div className="space-y-2 px-4 py-3 md:px-0">
           <div className="flex flex-wrap items-center gap-1">
@@ -109,6 +122,10 @@ export function PlaylistExperience({ playlistId, youtubePlaylistId, path, items 
               {p.next}
               <ChevronLeft aria-hidden data-icon="inline-end" />
             </Button>
+            <Button type="button" variant="ghost" className="ms-auto hidden lg:inline-flex" aria-pressed={isTheater} onClick={() => setIsTheater((value) => !value)} data-testid="playlist-theater">
+              {isTheater ? <Square aria-hidden data-icon="inline-start" /> : <RectangleHorizontal aria-hidden data-icon="inline-start" />}
+              {isTheater ? strings.watch.exitTheater : strings.watch.theater}
+            </Button>
             {showResume ? (
               <Button type="button" variant="ghost" disabled={!isReady} onClick={() => playVideo(lastItem.youtubeVideoId, resumeSeconds)} data-testid="playlist-resume">
                 <RotateCcw aria-hidden data-icon="inline-start" />
@@ -118,8 +135,12 @@ export function PlaylistExperience({ playlistId, youtubePlaylistId, path, items 
           </div>
 
           {current ? (
+            // Hidden on phones, where the player stays pinned and space is short. The list marks the current item.
             <div className="hidden space-y-1 md:block">
-              <p dir="auto" className="text-start text-sm font-medium" data-testid="playlist-current">
+              <p className="text-xs font-semibold text-brand">
+                {p.nowPlaying} · <bdi dir="ltr">{p.position(currentIndex + 1, items.length)}</bdi>
+              </p>
+              <p dir="auto" className="text-start text-base leading-snug font-semibold sm:text-lg" data-testid="playlist-current">
                 {current.title}
               </p>
               <YouTubeAttribution youtubeVideoId={current.youtubeVideoId} channelTitle={current.channelTitle} />
@@ -149,7 +170,7 @@ export function PlaylistExperience({ playlistId, youtubePlaylistId, path, items 
         ) : null}
         {isSignedIn && youtubePlaylistId ? <p className="mb-2 text-xs text-text-secondary">{p.youtubeProgressNote}</p> : null}
 
-        <ol className="max-h-[70dvh] space-y-1 overflow-y-auto rounded-xl border bg-surface p-1.5" data-testid="playlist-items">
+        <ol ref={listRef} className={cn("space-y-1 overflow-y-auto rounded-2xl border bg-surface p-1.5", isTheater ? "max-h-[32rem] lg:grid lg:grid-cols-2 lg:gap-1 lg:space-y-0" : "max-h-[70dvh]")} data-testid="playlist-items">
           {items.map((item, index) => {
             const itemProgress = progress.get(item.videoId);
             const isCurrent = item.youtubeVideoId === currentVideoId;

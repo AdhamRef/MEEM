@@ -3,7 +3,11 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { strings } from "@/config/strings.ar";
 import { collectFootnotes, extractHeadings } from "./analysis";
-import { isSafeHref, isSafeImageSrc, sanitizeDocument, type BlockNode, type ContentMark, type InlineNode } from "./document";
+import { isSafeHref, isSafeImageSrc, sanitizeDocument, type BlockNode, type CalloutVariant, type ContentMark, type InlineNode, type TextAlignment } from "./document";
+
+/** Logical values only, so a paragraph aligned to the end stays at the end in either direction. */
+const alignClass: Record<Exclude<TextAlignment, "start">, string> = { center: "text-center", end: "text-end", justify: "text-justify" };
+const alignOf = (attrs: { textAlign?: Exclude<TextAlignment, "start"> } | undefined) => (attrs?.textAlign ? alignClass[attrs.textAlign] : undefined);
 
 /**
  * Builds React elements from the allow-listed document, and never uses
@@ -33,6 +37,9 @@ function renderMarks(text: string, marks: ContentMark[] | undefined): ReactNode 
   for (const mark of marks ?? []) {
     if (mark.type === "bold") output = <strong>{output}</strong>;
     else if (mark.type === "italic") output = <em>{output}</em>;
+    else if (mark.type === "underline") output = <u>{output}</u>;
+    else if (mark.type === "strike") output = <s>{output}</s>;
+    else if (mark.type === "highlight") output = <mark>{output}</mark>;
     else output = renderLink(mark.attrs.href, output);
   }
   return output;
@@ -59,7 +66,7 @@ function renderBlock(block: BlockNode, key: number, context: RenderContext): Rea
   switch (block.type) {
     case "paragraph":
       return (
-        <p key={key} dir="auto">
+        <p key={key} dir="auto" className={alignOf(block.attrs)}>
           {renderInline(block.content, context)}
         </p>
       );
@@ -69,7 +76,7 @@ function renderBlock(block: BlockNode, key: number, context: RenderContext): Rea
       const isEmpty = !block.content?.some((node) => node.type === "text" && node.text.trim());
       const anchor = isEmpty ? undefined : context.anchors[context.nextHeading++];
       return (
-        <Tag key={key} id={anchor} dir="auto">
+        <Tag key={key} id={anchor} dir="auto" className={alignOf(block.attrs)}>
           {renderInline(block.content, context)}
         </Tag>
       );
@@ -83,6 +90,35 @@ function renderBlock(block: BlockNode, key: number, context: RenderContext): Rea
       return <blockquote key={key}>{block.content.map((child, index) => renderBlock(child, index, context))}</blockquote>;
     case "horizontalRule":
       return <hr key={key} />;
+    case "callout":
+      return (
+        <aside key={key} className="article-callout" data-variant={block.attrs.variant} aria-label={calloutLabel(block.attrs.variant)}>
+          <p className="article-callout-label">{calloutLabel(block.attrs.variant)}</p>
+          {block.content.map((child, index) => renderBlock(child, index, context))}
+        </aside>
+      );
+    case "table":
+      return (
+        // Wide tables scroll inside their own box on a phone, rather than widening the page.
+        <div key={key} className="article-table" role="region" aria-label={strings.articles.table} tabIndex={0}>
+          <table>
+            <tbody>
+              {block.content.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.content.map((cell, cellIndex) => {
+                    const Cell = cell.type === "tableHeader" ? "th" : "td";
+                    return (
+                      <Cell key={cellIndex} colSpan={cell.attrs.colspan > 1 ? cell.attrs.colspan : undefined} rowSpan={cell.attrs.rowspan > 1 ? cell.attrs.rowspan : undefined} scope={cell.type === "tableHeader" ? "col" : undefined} dir="auto">
+                        {cell.content.map((child, index) => renderBlock(child, index, context))}
+                      </Cell>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
     case "figure":
       if (!isSafeImageSrc(block.attrs.src)) return null;
       return (
@@ -92,6 +128,10 @@ function renderBlock(block: BlockNode, key: number, context: RenderContext): Rea
         </figure>
       );
   }
+}
+
+function calloutLabel(variant: CalloutVariant): string {
+  return strings.articles.callouts[variant];
 }
 
 export function ArticleBody({ body }: { body: unknown }) {

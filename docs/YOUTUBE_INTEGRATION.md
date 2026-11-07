@@ -10,7 +10,7 @@ How the platform uses YouTube, and what must stay true. For the code conventions
 | No OAuth scopes. An API key only. | `lib/auth` requests `openid email profile` |
 | Stored data is refreshed or removed within 30 days | `features/youtube/metadata-refresh.service.ts` |
 | Titles and descriptions are never edited | Services accept no such field for YouTube content |
-| Nothing is published automatically | Imports and syncs create drafts. A person pressing publish, one at a time or in bulk, counts as the review. |
+| Publishing | **Content from followed sources is published automatically** (owner's decision, plan D10). Admins hide or reclassify it afterwards. Anything else stays a draft until a person publishes it. |
 | Statistics are off | The settings screen can't turn them on, until the API Compliance Audit confirms them |
 | Comments are read-only, and not stored | `features/youtube/comments.service.ts` |
 | Every item showing YouTube's content credits it | Cards, search results, suggestions, saved items, and history (R4) |
@@ -34,35 +34,35 @@ A channel of 10,000 videos costs about 400 units to preview, and nothing more to
 
 **`quotaExceeded` is never retried.** It marks the day as exhausted, and no further calls are made until the reset. Only temporary failures are retried.
 
-## The importer
+## Content sources
 
-A job on the server, advanced by the browser one step at a time. There's no queue, so unfinished jobs run only while the importer list or that job's page is open. The list runs them one after another, oldest first, and closing it loses nothing.
+By the owner's decision of 2026-11-07 (plan D10), admins follow sources on `/admin/sources`, and new content is published automatically. This replaced the 12-step importer and its review queue. Its old `ImportJob` and `ImportCandidate` records stay in the database, and the TTL index still removes the previews.
 
-```text
-startChannelImport → resolves the channel, creates the job (DISCOVERING)
-runDiscoveryStep   → one page of uploads and their details, repeated until done (READY_FOR_REVIEW)
-                     the page token is saved each time, so it can resume
-                     quota or API failure → PAUSED, with the reason
-review             → filter, select, assign
-runImportStep      → 25 videos per call (IMPORTING), then COMPLETED with a report
-```
+One box takes any of these, worked out by `features/youtube/sources/detect.ts`, so only validated IDs reach YouTube:
+
+| Pasted | What happens |
+|---|---|
+| A channel address, `@handle`, or `UC…` ID | Followed. Its videos arrive through checks, below. |
+| A playlist address or ID | Imported as a YouTube playlist and published, with its videos published. |
+| One or more video links | Published at once. Their channel is saved but not followed. |
+
+**A check** (`checkChannel` in `channel-check.service.ts`) reads the uploads playlist, newest first, until a page holds a video already stored, so finding new uploads usually costs 1 unit. Details are fetched only for IDs not stored, in one batched request per page. Until every older upload has been read, the walk carries on from `backfillPageToken`, saved after each page, so an interrupted check loses nothing. A video already stored is never touched, which is how a hidden video stays hidden.
 
 | Requirement | How it's met |
 |---|---|
-| Closing the browser loses nothing | Everything is stored after each step, and reopening continues |
-| No duplicates | The unique index on `youtubeVideoId` decides. A clash counts as "duplicate" and isn't an error. |
-| Previews respect the 30-day limit | `ImportCandidate.expiresAt` is 29 days out, and a TTL index removes them |
-| The 30-day clock stays honest | An imported video's `metadataFetchedAt` is when the preview was fetched |
-| Stopping | Takes effect at once, whether or not a page is working on the job. A step already under way can't bring it back. What's imported stays, as drafts. |
-| Deleting | Removes the job and its preview list, in any state. Imported videos stay, and the audit log keeps a record. |
-| One job per channel | Starting a channel with an unfinished job continues that job, so quota isn't spent twice on the same videos. |
-| Honest status | "Running" appears only while a step is under way, or when the server saved progress in the last minute. |
+| No duplicates | The unique index on `youtubeVideoId` decides. A clash during `createMany` falls back to one-by-one inserts. |
+| One check per channel at a time | A lease, `checkLockedUntil`, taken with a conditional update and released at the end. A lease left by a crashed check expires within 30 seconds of its deadline. |
+| Bounded run time | No new page starts after the deadline: 20 seconds for a person's check, 45 for the hourly job. At least one page is read, so every check progresses. |
+| Quota | The hourly job stops once the day's usage reaches `autoCheckQuotaCeiling`, 8,000 by default. `quotaExceeded` is never retried. |
+| Switchable | `autoCheckEnabled` in the settings stops the hourly job without changing anything stored. |
 
-**Sync** uses the same job with type `SYNC`. It only fetches details for videos not yet stored, and stops at the first page with nothing new, because uploads run newest first. It runs only when someone presses the button, so there's no background polling (§7.4).
+**While a Sources or channel page is open**, the browser asks for one 20-second step after another for channels still on their first fetch, so a new channel fills in minutes. With the page closed, the hourly job continues from the same place.
+
+**The hourly job** is `/api/cron/sources-check`, protected by `CRON_SECRET` like the refresh. It checks followed channels not checked in the last 55 minutes, or still on their first fetch, oldest first, then syncs YouTube playlists not synced in that time. Each run leaves an audit record from `system:cron`, and the Sources page shows the last one. `.github/workflows/youtube-schedule.yml` calls it every hour, and calls the daily refresh once a day.
 
 ## Detecting Shorts
 
-The API has no field saying a video is a Short. Length gives a *candidate* only, using the configurable threshold, 180 seconds by default. Choosing a kind, or pressing publish, sets `reviewedAt`. The owner decided on 2026-11-05 that publishing shouldn't require choosing a kind or category first, so bulk publishing can publish candidates as they stand, and a kind can be wrong until corrected.
+The API has no field saying a video is a Short. Length gives a suggestion only, using the configurable threshold, 180 seconds by default. Choosing a kind, or pressing publish, sets `reviewedAt`. Videos published automatically from sources keep the suggested kind and no `reviewedAt`. The owner decided on 2026-11-05 that publishing shouldn't require choosing a kind or category first, so bulk publishing can publish candidates as they stand, and a kind can be wrong until corrected.
 
 **Shape comes from `player.embedWidth` and `embedHeight`,** which YouTube reports when `maxHeight` is sent, at no extra quota. Tested on 50 of the owner's real videos: vertical ones report 608×1080 and wide ones 1920×1080, including wide clips under 3 minutes. A wide video is never a Short candidate, and the feed sizes each player to its real shape. It's stored data, refreshed with everything else. `npm run youtube:backfill-shapes` fills it in for videos and previews stored before this existed.
 

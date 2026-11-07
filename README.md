@@ -57,7 +57,7 @@ Only the `openid`, `email`, and `profile` scopes are requested.
 
 The site runs without an API key, showing whatever is stored. With one, set `YOUTUBE_API_ENABLED=true` and `YOUTUBE_API_KEY`.
 
-Normally, videos come through the channel importer at `/admin/youtube-importer`. See [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) and [docs/YOUTUBE_INTEGRATION.md](docs/YOUTUBE_INTEGRATION.md). To fill a local feed quickly with specific videos (development only, since this skips the review that publishing normally requires):
+Normally, videos come from the channels, playlists, and links added at `/admin/sources`, which publishes them automatically and checks for new ones every hour (plan D10). See [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) and [docs/YOUTUBE_INTEGRATION.md](docs/YOUTUBE_INTEGRATION.md). To fill a local feed quickly with specific videos (development only, since this skips the review that publishing normally requires):
 
 ```bash
 npm run youtube:import-dev -- VIDEO_ID_OR_URL ANOTHER_ID

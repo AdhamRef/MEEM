@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, BookOpen, Clapperboard, DownloadCloud, Layers, ExternalLink, LayoutDashboard, LayoutGrid, Library, ListVideo, ScrollText, Settings, Tv, Users } from "lucide-react";
+import { Activity, BookOpen, Clapperboard, Layers, ExternalLink, LayoutDashboard, LayoutGrid, Library, ListVideo, ScrollText, Settings, Tv, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { strings } from "@/config/strings.ar";
@@ -8,9 +8,8 @@ import { cn } from "@/lib/utils";
 
 const ITEMS = {
   overview: { href: "/admin", label: strings.admin.overview, icon: LayoutDashboard },
+  sources: { href: "/admin/sources", label: strings.sources.title, icon: Tv },
   shorts: { href: "/admin/shorts", label: strings.admin.shorts, icon: Clapperboard },
-  importer: { href: "/admin/youtube-importer", label: strings.importer.title, icon: DownloadCloud },
-  channels: { href: "/admin/channels", label: strings.admin.channels, icon: Tv },
   articles: { href: "/admin/articles", label: strings.admin.articles, icon: BookOpen },
   topics: { href: "/admin/topics", label: strings.admin.topics, icon: LayoutGrid },
   libraries: { href: "/admin/libraries", label: strings.admin.libraries, icon: Library },

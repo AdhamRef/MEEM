@@ -337,8 +337,16 @@ export function useActivePlayer({ mountRef, videoId, isInView, autoplay, strateg
     player.playVideo();
   }, []);
 
+  /** From a person's choice, using the documented setPlaybackRate method. YouTube may round it. */
+  const setPlaybackRate = useCallback((rate: number) => {
+    const player = playerRef.current;
+    if (!player || !isReadyRef.current) return;
+    player.setPlaybackRate(rate);
+  }, []);
+
   const isCurrent = playback.videoId === videoId;
   return {
+    setPlaybackRate,
     getPosition,
     resumeAt,
     state: !videoId ? ("idle" as const) : isCurrent ? playback.state : ("loading" as const),

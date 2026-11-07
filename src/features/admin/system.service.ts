@@ -158,7 +158,7 @@ export interface IntegrationStatus {
   statisticsEnabled: boolean;
   quota: { unitsToday: number; exhausted: boolean; dailyLimit: number; recentDays: { day: string; units: number; exhausted: boolean }[] };
   refresh: { afterDays: number; videosDue: number; videosPastLimit: number; playlistsDue: number; channelsDue: number; lastRun: Date | null };
-  jobs: { active: number; paused: number };
+  sources: { followedChannels: number; fetchingChannels: number };
   cronConfigured: boolean;
 }
 
@@ -169,15 +169,16 @@ export async function getIntegrationStatus(actor: Actor | null, now = new Date()
   const refreshBefore = new Date(now.getTime() - settings.refreshAfterDays * MS_PER_DAY);
   const limitBefore = new Date(now.getTime() - MAX_DATA_AGE_DAYS * MS_PER_DAY);
 
-  const [quota, recentDays, videosDue, videosPastLimit, playlistsDue, channelsDue, active, paused, lastRun] = await Promise.all([
+  const [quota, recentDays, videosDue, videosPastLimit, playlistsDue, channelsDue, followedChannels, fetchingChannels, lastRun] = await Promise.all([
     getQuotaUsage(now),
     prisma.apiQuotaUsage.findMany({ orderBy: { day: "desc" }, take: 7, select: { day: true, units: true, exhausted: true } }),
     prisma.video.count({ where: { metadataFetchedAt: { lt: refreshBefore } } }),
     prisma.video.count({ where: { metadataFetchedAt: { lt: limitBefore }, title: { not: "" } } }),
     prisma.playlist.count({ where: { type: "YOUTUBE", metadataFetchedAt: { lt: refreshBefore } } }),
     prisma.youTubeChannel.count({ where: { metadataFetchedAt: { lt: refreshBefore } } }),
-    prisma.importJob.count({ where: { status: { in: ["DISCOVERING", "IMPORTING"] } } }),
-    prisma.importJob.count({ where: { status: "PAUSED" } }),
+    prisma.youTubeChannel.count({ where: { isFollowed: true } }),
+    // Never set can be null or missing, and those differ in filters.
+    prisma.youTubeChannel.count({ where: { isFollowed: true, OR: [{ isBackfillComplete: false }, { isBackfillComplete: null }, { isBackfillComplete: { isSet: false } }] } }),
     prisma.auditLog.findFirst({ where: { action: "youtube.refresh_metadata" }, orderBy: { id: "desc" }, select: { createdAt: true } }),
   ]);
 
@@ -186,7 +187,7 @@ export async function getIntegrationStatus(actor: Actor | null, now = new Date()
     statisticsEnabled: settings.statisticsEnabled,
     quota: { unitsToday: quota.units, exhausted: quota.exhausted, dailyLimit: DEFAULT_DAILY_QUOTA, recentDays },
     refresh: { afterDays: settings.refreshAfterDays, videosDue, videosPastLimit, playlistsDue, channelsDue, lastRun: lastRun?.createdAt ?? null },
-    jobs: { active, paused },
+    sources: { followedChannels, fetchingChannels },
     cronConfigured: Boolean(process.env.CRON_SECRET),
   };
 }

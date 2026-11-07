@@ -21,7 +21,10 @@ export function inlineText(content: InlineNode[] | undefined): string {
 function visitBlocks(blocks: BlockNode[], visit: (block: BlockNode) => void): void {
   for (const block of blocks) {
     visit(block);
-    if (block.type === "blockquote") visitBlocks(block.content, visit);
+    if (block.type === "blockquote" || block.type === "callout") visitBlocks(block.content, visit);
+    if (block.type === "table") {
+      for (const row of block.content) for (const cell of row.content) visitBlocks(cell.content, visit);
+    }
     if (block.type === "bulletList" || block.type === "orderedList") {
       for (const item of block.content) visitBlocks(item.content, visit);
     }

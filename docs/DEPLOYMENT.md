@@ -18,7 +18,7 @@ Some of these aren't technical, and the [owner's list](OWNER_ACTIONS.md) has the
 | Option | Works | Notes |
 |---|---|---|
 | A server or container running Node | Yes, and the simplest | `local` image storage works if the folder is on a persistent disk and is backed up. It doesn't work across several servers. |
-| Serverless | Should work | Needs `STORAGE_PROVIDER=s3`, because local files don't persist. Importer steps are short by design, to fit request time limits. **Not tested.** |
+| Serverless | Should work | Needs `STORAGE_PROVIDER=s3`, because local files don't persist. Source checks stop at a deadline, 20 or 45 seconds, to fit request time limits. **Not tested.** |
 
 Node 22.12 or newer. The first page load after a deployment may be slower, since server code loads on demand.
 
@@ -41,7 +41,17 @@ Then:
 3. Have your proxy set `X-Real-IP` or append to `X-Forwarded-For`. Rate limits are per address, so without this, all visitors share one limit.
 4. Sign in, and run the [first super admin](ENVIRONMENT_SETUP.md#first-super-admin) command.
 
-## The daily refresh is mandatory
+## Scheduled jobs
+
+`.github/workflows/youtube-schedule.yml` calls both endpoints below, given the repository secrets `SITE_URL` and `CRON_SECRET`. Any other scheduler works too.
+
+**Hourly: new content from followed sources** (plan D10). Without it, new videos arrive only while an admin has the Sources page open.
+
+```bash
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://your-site/api/cron/sources-check
+```
+
+### The daily refresh is mandatory
 
 YouTube requires stored data to be refreshed or removed within 30 days. **Without this job, videos leave the site after 30 days.**
 

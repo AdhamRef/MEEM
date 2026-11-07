@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element -- Thumbnails load directly from YouTube by design, and aren't re-processed or re-hosted. */
 import { ListVideo } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -12,6 +13,7 @@ import { StateMessage } from "@/components/shared/state-message";
 import { collectionJsonLd } from "@/lib/seo";
 import { strings } from "@/config/strings.ar";
 import { getPlaylistConnections, getPublishedPlaylistBySlug } from "@/features/playlists/playlists.service";
+import { formatTotalDuration } from "@/features/playlists/rules";
 import { pickThumbnailUrl } from "@/lib/youtube/normalize";
 
 interface PageProps {
@@ -37,39 +39,51 @@ export default async function PlaylistPage({ params }: PageProps) {
   const connections = await getPlaylistConnections(playlist.id);
   const path = slugHref("playlists", playlist.slug);
   const isYouTube = playlist.type === "YOUTUBE";
+  const cover = playlist.coverImage ?? pickThumbnailUrl(playlist.thumbnails) ?? items[0]?.thumbnailUrl ?? null;
+  const totalSeconds = items.reduce((sum, item) => sum + (item.durationSeconds ?? 0), 0);
+  const totalDuration = totalSeconds > 0 ? formatTotalDuration(totalSeconds) : null;
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-8 md:px-8" data-testid="playlist-page">
-      <header className="mb-6 max-w-3xl space-y-3">
-        <h1 dir="auto" className="text-start text-3xl leading-tight font-semibold">
-          {playlist.title}
-        </h1>
-        {/* A YouTube playlist's channel is credited as its source. A curated one mixes channels, credited per item. */}
-        <p className="text-sm text-text-secondary" data-testid="playlist-source">
-          {isYouTube ? (
-            <>
-              {playlist.channelTitle ? (
+    <div className="mx-auto w-full max-w-[1720px] px-4 py-6 md:px-6 lg:py-8" data-testid="playlist-page">
+      <header className="relative mb-6 overflow-hidden rounded-3xl border bg-surface" data-testid="playlist-hero">
+        {cover ? (
+          // A blurred copy of the cover sets the mood behind the text, as on YouTube's playlist pages.
+          <img src={cover} alt="" aria-hidden decoding="async" referrerPolicy="strict-origin-when-cross-origin" className="absolute inset-0 size-full scale-125 object-cover opacity-30 blur-3xl" />
+        ) : null}
+        <div className="relative flex flex-col gap-5 p-5 sm:flex-row sm:items-end sm:p-7">
+          {cover ? (
+            <img src={cover} alt="" decoding="async" referrerPolicy="strict-origin-when-cross-origin" className="aspect-video w-full max-w-sm shrink-0 rounded-2xl object-cover shadow-2xl sm:w-72" />
+          ) : null}
+          <div className="min-w-0 flex-1 space-y-3">
+            <p className="text-xs font-semibold tracking-wide text-brand">{isYouTube ? strings.playlists.youtubeSource : strings.playlists.curatedSource}</p>
+            <h1 dir="auto" className="text-start text-2xl leading-tight font-bold sm:text-3xl">
+              {playlist.title}
+            </h1>
+            {/* A YouTube playlist's channel is credited as its source. A curated one mixes channels, credited per item. */}
+            <p className="flex flex-wrap items-center gap-x-2 text-sm text-text-secondary" data-testid="playlist-source">
+              {isYouTube && playlist.channelTitle ? <bdi className="font-medium text-text-primary">{playlist.channelTitle}</bdi> : null}
+              {isYouTube && playlist.channelTitle ? <span aria-hidden>·</span> : null}
+              <span>{strings.playlists.itemCount(items.length)}</span>
+              {totalDuration ? (
                 <>
-                  <bdi className="font-medium text-text-primary">{playlist.channelTitle}</bdi> ·{" "}
+                  <span aria-hidden>·</span>
+                  <span>{strings.playlists.totalDuration(totalDuration)}</span>
                 </>
               ) : null}
-              {strings.playlists.youtubeSource}
-            </>
-          ) : (
-            strings.playlists.curatedSource
-          )}
-        </p>
-        {playlist.introduction ? (
-          <p dir="auto" className="text-start text-lg leading-relaxed whitespace-pre-line" data-testid="playlist-introduction">
-            {playlist.introduction}
-          </p>
-        ) : null}
-        {playlist.description ? (
-          <p dir="auto" className="line-clamp-6 text-start text-sm whitespace-pre-line text-text-secondary">
-            {playlist.description}
-          </p>
-        ) : null}
-        <ContentActions entityType="PLAYLIST" entityId={playlist.id} path={path} title={playlist.title} testId="playlist-actions" />
+            </p>
+            {playlist.introduction ? (
+              <p dir="auto" className="max-w-3xl text-start text-base leading-relaxed whitespace-pre-line" data-testid="playlist-introduction">
+                {playlist.introduction}
+              </p>
+            ) : null}
+            {playlist.description ? (
+              <p dir="auto" className="line-clamp-3 max-w-3xl text-start text-sm whitespace-pre-line text-text-secondary">
+                {playlist.description}
+              </p>
+            ) : null}
+            <ContentActions entityType="PLAYLIST" entityId={playlist.id} path={path} title={playlist.title} testId="playlist-actions" />
+          </div>
+        </div>
         <ViewRecorder entityType="PLAYLIST" entityId={playlist.id} />
         <JsonLd data={collectionJsonLd({ name: playlist.title, description: playlist.description }, path)} />
       </header>

@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import { ContentActions } from "@/components/knowledge/content-actions";
 import { ViewRecorder } from "@/components/knowledge/view-recorder";
+import { ArticleContents } from "@/components/articles/article-contents";
 import { ReadingProgress } from "@/components/articles/reading-progress";
 import { ArticleCard, cardGridClass, ContentSection, PlaylistCard, ResourceCard, ShortsStrip, slugHref, TopicCard, VideoTile } from "@/components/knowledge/content-cards";
 import { JsonLd } from "@/components/shared/json-ld";
@@ -43,17 +44,7 @@ export default async function ArticlePage({ params }: PageProps) {
   const path = slugHref("articles", article.slug);
   const hasContents = article.headings.length > 1;
 
-  const contents = hasContents ? (
-    <ol className="space-y-2 text-sm">
-      {article.headings.map((heading) => (
-        <li key={heading.anchor} className={heading.level === 3 ? "ms-3" : heading.level === 4 ? "ms-6" : undefined}>
-          <a href={`#${heading.anchor}`} dir="auto" className="block text-start text-text-secondary underline-offset-4 outline-none hover:text-text-primary hover:underline focus-visible:text-text-primary focus-visible:underline">
-            {heading.text}
-          </a>
-        </li>
-      ))}
-    </ol>
-  ) : null;
+  const contents = hasContents ? <ArticleContents headings={article.headings} /> : null;
 
   return (
     <>
@@ -64,19 +55,35 @@ export default async function ArticlePage({ params }: PageProps) {
         <div className="mx-auto max-w-[68ch] lg:max-w-[calc(68ch+18.5rem)]">
         <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_16rem] lg:gap-10">
           <div id="article-reading-area" className="min-w-0">
-            <header className="space-y-4">
-              <h1 dir="auto" className="text-start text-3xl leading-tight font-semibold text-balance md:text-4xl">
+            <header className="space-y-5 border-b pb-6">
+              {connections.topics.length ? (
+                <ul className="flex flex-wrap gap-2" aria-label={strings.articles.relatedTopics}>
+                  {connections.topics.slice(0, 3).map((topic) => (
+                    <li key={topic.id}>
+                      <Link href={slugHref("topics", topic.slug)} className="inline-flex min-h-8 items-center rounded-full bg-surface-elevated px-3 text-xs font-semibold text-brand outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
+                        {topic.title}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <h1 dir="auto" className="text-start text-3xl leading-tight font-bold text-balance md:text-5xl md:leading-tight">
                 {article.title}
               </h1>
               {article.excerpt ? (
-                <p dir="auto" className="text-start text-lg text-text-secondary">
+                <p dir="auto" className="text-start text-lg leading-relaxed text-text-secondary md:text-xl">
                   {article.excerpt}
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-secondary">
                 {article.bylineName ? (
-                  <span>
-                    {strings.articles.by} <bdi>{article.bylineName}</bdi>
+                  <span className="flex items-center gap-2">
+                    <span aria-hidden className="flex size-9 items-center justify-center rounded-full bg-brand/15 font-bold text-brand">
+                      {article.bylineName.trim().charAt(0)}
+                    </span>
+                    <span>
+                      {strings.articles.by} <bdi className="font-medium text-text-primary">{article.bylineName}</bdi>
+                    </span>
                   </span>
                 ) : null}
                 {article.publishedAt ? <time dateTime={article.publishedAt.toISOString()}>{formatDate(article.publishedAt)}</time> : null}
@@ -89,7 +96,7 @@ export default async function ArticlePage({ params }: PageProps) {
 
             {article.coverImage ? (
               <figure className="mt-6">
-                <img src={article.coverImage} alt="" decoding="async" className="w-full rounded-2xl" data-testid="article-cover" />
+                <img src={article.coverImage} alt="" decoding="async" className="aspect-video w-full rounded-3xl object-cover shadow-xl" data-testid="article-cover" />
                 {article.coverCaption ? (
                   <figcaption dir="auto" className="mt-2 text-start text-sm text-text-secondary">
                     {article.coverCaption}
@@ -150,7 +157,7 @@ export default async function ArticlePage({ params }: PageProps) {
           {contents ? (
             <aside className="hidden lg:block">
               <nav aria-label={strings.articles.contents} className="sticky top-6 max-h-[calc(100dvh-3rem)] overflow-y-auto" data-testid="contents-desktop">
-                <p className="mb-3 text-sm font-medium">{strings.articles.contents}</p>
+                <p className="mb-3 text-xs font-semibold tracking-wide text-text-secondary">{strings.articles.contents}</p>
                 {contents}
               </nav>
             </aside>

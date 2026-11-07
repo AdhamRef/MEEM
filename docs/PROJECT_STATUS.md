@@ -6,6 +6,34 @@ Last updated: 2026-11-06
 
 Everything the owner needs to do, across all phases, is in [OWNER_ACTIONS.md](OWNER_ACTIONS.md).
 
+## Latest changes, 2026-11-07: watch, playlist, and article pages
+
+The owner's request, and nothing is committed. Every addition reads stored data, so none of it spends quota. Only comments, opened on request, do, as before.
+
+| Change | What it does | Verified |
+|---|---|---|
+| **Video page** | YouTube-style layout: player, title, channel, pill actions, topic chips, and an expandable description. Suggestions sit beside it on wide screens and below it on phones: the channel's recent videos interleaved with videos from channels sharing its topics, in the stable random feed order, never by statistics. A shelf of the channel's Shorts follows. | Type check and lint. `description.test.ts` (18 cases). **Suggestions service has no integration test yet, and the page hasn't been run in a browser.** |
+| **Description** | Timestamps seek the player, links open safely (`nofollow ugc`), and chapters are read the way YouTube reads them: at least three, from 0:00, in order. YouTube's text is never altered. | Unit tests for parsing, chapters, and that splitting never changes the text. |
+| **Theater mode and controls** | Theater mode widens the player across the page on a black band, remembered per browser. Under `FEED_IMMERSIVE_OVERLAY`: playback speed, the current chapter, keyboard shortcuts (space/K, F, T, M, arrows, J/L), and an autoplay countdown to the next video that can be cancelled or switched off. With the switch off, YouTube's own controls and end screen stay, with no auto-skip (R5). | Type check only. **Not run in a browser.** |
+| **Playlist page** | A header with the cover, a blurred backdrop, item count, and total length. Theater mode, a "now playing" line with position, and the list keeps the current item in view. The player still uses YouTube's own controls, as the rules require there. | Type check only. |
+| **Article editor** | Still Tiptap, as the plan pins it, with official extensions at 3.32.2: underline, strikethrough, one-colour highlight, logical alignment, tables, boxes for a verse, hadith, benefit, note, or caution, a menu over selected text, placeholder, and a word count with reading time. New packages: `@tiptap/extension-highlight`, `@tiptap/extension-text-align`, `@tiptap/extension-table`, and `@tiptap/extensions`, which was already installed indirectly. | `content.test.ts`: 5 new allow-list tests, including hostile colours, alignments, nested boxes, and table spans. **The editor hasn't been used in a browser.** |
+| **Article page** | Topic chips, a larger title, a byline with an initial, a larger cover, and a contents list that marks the section being read. Boxes and tables render from the allow-list, with no HTML stored. | Type check only. |
+
+## Latest changes, 2026-11-07: content sources (plan D10)
+
+The owner's request, and nothing is committed. **This changes specification §7.1, §7.2, and §7.4 and plan L5 by the owner's decision:** new content is published without a review step, and sources are checked hourly.
+
+| Change | What it does | Verified |
+|---|---|---|
+| **Content sources** at `/admin/sources` | One box takes a channel, a playlist, or video links, and works out which. It replaces the YouTube importer and the channels page, which now redirect here. | `detect.test.ts` (16 cases). Browser tests written, **not run yet** (see below). |
+| **Server-side fetching, published at once** | A channel's uploads are read 50 at a time on the server and published as they arrive, as Short or long by length and shape. It saves its place after each page, and two checks can't walk one channel at once. While the page is open, the browser keeps it going with no clicks. | `sources.test.ts` with YouTube mocked: 30 tests, including resume after a deadline and after `quotaExceeded`, the lease, no duplicates, and batched requests. |
+| **Hourly check** at `/api/cron/sources-check` | Followed channels not checked within 55 minutes, then YouTube playlists. Stops at 45 seconds and at a daily quota ceiling, 8,000 units by default. Can be switched off in the settings. Called by `.github/workflows/youtube-schedule.yml`, which also runs the daily refresh. | Integration tests for due and not-due channels, the ceiling, the switch, and older stored settings. **The workflow hasn't run**: it needs the secrets in OWNER_ACTIONS and a push. |
+| **Channel page** | All of a channel's videos, filtered by published, hidden, and kind. Hide, show, or reclassify any selection, check now, edit topics, or stop following. A hidden video stays hidden in later checks. | Integration test for "hidden stays hidden". |
+| **Playlists and single videos** | Their new videos are published too, and a playlist is published as soon as it has items. | Integration test for pasted videos. The existing playlist tests ran with publishing on. |
+| **Removed** | The 12-step importer, its job pages and components, and its service and tests. `ImportJob` and `ImportCandidate` stay in the schema, so existing records and the TTL index remain. | Type check and lint pass. |
+
+**Not verified:** a real channel through the real API, and the real GitHub schedule. On the existing database, `npm run db:sync` still needs the last step in OWNER_ACTIONS before the new fields' index exists. Reads work without it, since the new fields are optional.
+
 ## Latest changes, 2026-11-06
 
 Owner's requests, and nothing is committed yet.

@@ -9,39 +9,39 @@ For the volunteers who run the platform. Open the dashboard at `/admin`. You'll 
 | Contributor | Write drafts, and edit drafts they wrote or were assigned |
 | Scientific reviewer | Read everything, leave review notes, and edit drafts assigned to them. Notes never block publishing. |
 | Editor | Write and edit any content, and manage topics, libraries, playlists, and relationships |
-| Admin | All of the above, plus publishing, archiving, deleting, importing from YouTube, and viewing users and the activity log |
+| Admin | All of the above, plus publishing, archiving, deleting, adding content sources from YouTube, and viewing users and the activity log |
 | Super admin | All of the above, plus roles and settings |
 
 **Publishing is separate from editing.** Editors and contributors need an individual permission from the super admin to publish. The super admin can also grant contributors and reviewers extra permissions.
 
-## Adding videos from a channel
+## Adding content: Sources
 
-Use **YouTube Channel Importer**.
+Everything comes in through **Content sources** (`/admin/sources`). Paste a link in the box and press **Add**. The kind of link is worked out for you:
 
-1. Paste the channel's address or its `@handle`, then press **Fetch videos**. Older addresses containing `/c/` don't work, so open the channel and copy its `@handle` instead.
-2. Wait while the videos are fetched. You can close the page at any time and come back to it from the list of imports.
-3. Review the list. Use the filter to see Short candidates, long-form candidates, what's already imported, and what you've selected.
-4. Tick the videos you want, or use **Select all** to take everything the filter shows, across every page.
-5. Optionally, classify what you've selected: its kind, libraries, and series. Press **Apply to selected**. Topics aren't chosen here, because videos follow their channel's topics.
-6. Press **Import selected**. The numbers at the top report what was imported, already existed, was skipped, or failed.
+- **A channel**, by its address or its `@handle`: the site follows it. Its videos are fetched and published as they arrive, newest first. A bar shows how far it has got. Older addresses containing `/c/` don't work, so open the channel and copy its `@handle` instead.
+- **A playlist**, by its address: its videos are added and published, and the playlist gets its own page on the site.
+- **One or more videos**: paste their links, one per line (Shift and Enter starts a new line). They're published at once. Their channel is saved but not followed.
 
-**Nothing goes live by importing.** Every imported video is a draft.
+**New content is published automatically.** Every followed channel and every YouTube playlist is checked once an hour, and what's new goes live. Whether a video is a Short or a long video is decided by its length and shape. You can change it afterwards.
 
-**"Short candidate" is only a suggestion**, based on length. YouTube doesn't say which videos are Shorts, so a person has to check. Choosing a kind counts as that check. If you leave the kind on its suggestion, the video stays marked as waiting for review.
+**A first fetch goes fastest with the page open.** While the Sources page or the channel's page is open, the site keeps fetching without stopping. If you close it, the hourly check carries on from the same place. Nothing is lost either way.
 
-**If it says the daily quota has run out,** the import is paused rather than lost. Come back after midnight Pacific time and press **Resume**.
+**If it says the daily quota has run out,** nothing is lost. Fetching continues by itself after midnight Pacific time. The hourly check also stops by itself once the day's usage reaches the ceiling in **Settings**, so some quota is always left for you.
 
-### Keeping an import running
+### Managing a channel
 
-**Fetching and importing only happen while the importer list, or that job's own page, is open.** With the list open, unfinished jobs run one after another, and each card shows what's really happening: running now, waiting, or stopped with the reason. Close the page and they stop, then continue from the same place when you come back. Nothing is lost.
+Open a channel from the list to see all its videos.
 
-Each card has a **stop** button, which ends the job at once, and a **delete** button, which removes the job and its list of fetched videos. Both ask first. Videos you already imported stay as drafts either way. Starting a channel that has an unfinished job takes you to that job rather than making a second one.
+- **To hide videos**, tick them, or use the select-all box to take everything the filter matches across every page, then press **Unpublish**. **Publish** shows them again. A hidden video stays hidden: later checks never bring it back.
+- **Filters** show everything, only what's published, or only what's hidden, and Shorts or long videos.
+- **Check now** looks for new videos straight away, rather than waiting for the hour.
+- **Stop following**, in the menu, ends the hourly checks. The channel's videos stay exactly as they are. Stopped channels, and the channels of videos added on their own, are listed under **Saved channels not followed**, where **Follow** starts them again.
 
 ## Giving channels their topics
 
-**This is the one place video topics are decided.** Every video of a channel belongs to all of its topics, including videos imported later.
+**This is the one place video topics are decided.** Every video of a channel belongs to all of its topics, including videos added later.
 
-1. Open **YouTube channels**, then press **Edit topics** on a channel. You can also open a topic and add channels under **Channels**. Both change the same link.
+1. Open the channel from **Content sources**, then press **Edit topics**. You can also open a topic and add channels under **Channels**. Both change the same link.
 2. Search for a topic and pick it. A channel can have several. Changes save immediately and reach visitors within a minute or so.
 
 A topic shows on the first visit only once it's published and has a channel with a published video. Visitors who chose that topic get its channels switched on by default.
@@ -58,10 +58,6 @@ On a video's own page you can also add a button that leads viewers to an article
 
 YouTube's title and description can't be edited. YouTube requires this.
 
-## New videos from a channel you already use
-
-Open **YouTube Channels** and press **Sync channel**. It finds only what's new since last time, and you review it the same way. Nothing checks channels automatically, so sync when you want to.
-
 ## Writing an article
 
 Use **Articles**, then **Add**.
@@ -70,6 +66,10 @@ Use **Articles**, then **Add**.
 - **Preview** shows exactly what readers will see.
 - Everything under "Connections" is optional: topics, libraries, videos, playlists, and related content.
 - Add a short description to images, for readers who can't see them.
+- **Select text** to get a small menu for bold, italic, underline, highlight, and links. The toolbar also has strikethrough, alignment, lists, quotes, dividers, images, and footnotes.
+- **Boxes** (the dashed square) set a passage apart as a verse (آية), hadith, benefit, note, or caution. Select the paragraphs first, then pick the kind. The label at the top of a box changes its kind.
+- **Tables:** insert one, and table tools appear while the cursor is inside it: add rows and columns, make the first row headings, or delete. On a phone, readers scroll wide tables sideways.
+- The bottom of the editor shows the word count and reading time.
 - Only store an article's full text if you have the right to. For anything else, add an **external resource** with a short description and a link.
 
 A published article's address can't change, because people may have shared it. Unpublish it first if you must.
@@ -79,7 +79,7 @@ A published article's address can't change, because people may have shared it. U
 - **Topics** gather everything about a subject. Their page hides whatever is empty.
 - **Libraries** are larger collections. Tick the star beside an item to feature it at the top.
 - **Series** are playlists you build from any channels. Drag items to reorder them, or use the arrows. Each change saves straight away.
-- **YouTube playlists** are imported by address, and their contents and order come from YouTube. Press **Sync now** to update one.
+- **YouTube playlists** are added from **Content sources**, and their contents and order come from YouTube. They're re-checked every hour, and **Sync now** on a playlist's page updates it straight away.
 
 Links on these pages save immediately, one at a time.
 

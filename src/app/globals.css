@@ -236,6 +236,107 @@
       background: var(--surface-elevated);
       font-size: 0.875em;
     }
+
+    & mark {
+      padding-inline: 0.15em;
+      border-radius: var(--radius-sm);
+      background: color-mix(in oklab, var(--accent) 28%, transparent);
+      color: inherit;
+    }
+
+    & u {
+      text-underline-offset: 0.3em;
+    }
+
+    /* Boxes that stand apart from the text: a verse, a hadith, a benefit, a note, or a caution. */
+    & .article-callout {
+      --callout: var(--accent);
+      padding: 1em 1.25em;
+      border: 1px solid color-mix(in oklab, var(--callout) 35%, transparent);
+      border-inline-start-width: 4px;
+      border-radius: var(--radius);
+      background: color-mix(in oklab, var(--callout) 9%, transparent);
+
+      & > * + * {
+        margin-block-start: 0.75em;
+      }
+    }
+
+    & .article-callout[data-variant="warning"] {
+      --callout: var(--destructive);
+    }
+
+    & .article-callout[data-variant="note"] {
+      --callout: var(--text-secondary);
+    }
+
+    /* A verse is set larger and centred, as it is in print. */
+    & .article-callout[data-variant="ayah"] {
+      text-align: center;
+      font-size: 1.15em;
+      line-height: 2.2;
+    }
+
+    & .article-callout-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: var(--callout);
+    }
+
+    & .article-table {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    & .article-table:focus-visible {
+      outline: 3px solid color-mix(in oklab, var(--accent) 50%, transparent);
+    }
+
+    & table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9375em;
+      line-height: 1.7;
+    }
+
+    & :is(th, td) {
+      padding: 0.6em 0.9em;
+      border-block-end: 1px solid var(--border);
+      text-align: start;
+      vertical-align: top;
+    }
+
+    & :is(th, td) + :is(th, td) {
+      border-inline-start: 1px solid var(--border);
+    }
+
+    & tr:last-child > :is(th, td) {
+      border-block-end: 0;
+    }
+
+    & th {
+      background: var(--surface-elevated);
+      font-weight: 600;
+    }
+  }
+
+  /* Tables in the editor need the same borders, and a visible selected cell. */
+  .tiptap-editor .tableWrapper {
+    overflow-x: auto;
+  }
+
+  .tiptap-editor .selectedCell {
+    background: color-mix(in oklab, var(--accent) 18%, transparent);
+  }
+
+  .tiptap-editor p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    float: inline-start;
+    height: 0;
+    color: var(--text-secondary);
+    pointer-events: none;
   }
 
   /* The editor numbers its footnotes the way the article page will. */

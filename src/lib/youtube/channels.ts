@@ -61,6 +61,7 @@ const channelsResponseSchema = z.object({
           thumbnails: z.record(z.string(), z.object({ url: z.url() })).optional(),
         }),
         contentDetails: z.object({ relatedPlaylists: z.object({ uploads: z.string().optional() }).optional() }).optional(),
+        statistics: z.object({ videoCount: z.coerce.number().int().nonnegative().optional() }).optional(),
       }),
     )
     .default([]),
@@ -73,6 +74,8 @@ export interface NormalizedChannel {
   handle: string | null;
   thumbnailUrl: string | null;
   uploadsPlaylistId: string | null;
+  /** YouTube's own count of public uploads, used only to show how far a first fetch has got. */
+  videoCount: number | null;
 }
 
 type ChannelResource = z.infer<typeof channelsResponseSchema>["items"][number];
@@ -86,10 +89,12 @@ function normalizeChannel(resource: ChannelResource): NormalizedChannel {
     handle: resource.snippet.customUrl ?? null,
     thumbnailUrl: thumbnails?.medium?.url ?? thumbnails?.high?.url ?? thumbnails?.default?.url ?? null,
     uploadsPlaylistId: resource.contentDetails?.relatedPlaylists?.uploads ?? null,
+    videoCount: resource.statistics?.videoCount ?? null,
   };
 }
 
-const PARTS = "snippet,contentDetails";
+// Extra parts of one request cost no extra quota.
+const PARTS = "snippet,contentDetails,statistics";
 
 export async function resolveChannel(reference: Exclude<ChannelReference, { kind: "legacy" }>): Promise<NormalizedChannel | null> {
   const lookup: Record<string, string> = reference.kind === "id" ? { id: reference.value } : reference.kind === "handle" ? { forHandle: reference.value } : { forUsername: reference.value };

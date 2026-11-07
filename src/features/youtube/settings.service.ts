@@ -18,6 +18,11 @@ export const youtubeSettingsSchema = z.strictObject({
   maxShortSeconds: z.number().int().min(1).max(3600),
   /** At 50 videos and 1 quota unit per batch, the default refreshes up to 1,000 videos per run. */
   refreshBatchesPerRun: z.number().int().min(1).max(1000),
+  // Defaults, so settings saved before these existed still read as valid.
+  /** The hourly check of followed sources (plan D10). Off stops it without touching what's stored. */
+  autoCheckEnabled: z.boolean().default(true),
+  /** Hourly checks stop for the day once usage reaches this, leaving the rest for the refresh and manual work. */
+  autoCheckQuotaCeiling: z.number().int().min(0).max(1_000_000).default(8000),
 });
 
 export type YouTubeSettings = z.infer<typeof youtubeSettingsSchema>;
@@ -27,6 +32,8 @@ export const DEFAULT_YOUTUBE_SETTINGS: YouTubeSettings = {
   refreshAfterDays: 25,
   maxShortSeconds: 180,
   refreshBatchesPerRun: 20,
+  autoCheckEnabled: true,
+  autoCheckQuotaCeiling: 8000,
 };
 
 export async function getYouTubeSettings(): Promise<YouTubeSettings> {

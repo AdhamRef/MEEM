@@ -540,6 +540,10 @@ model YouTubeChannel {
   lastCheckError      String?
   /// A short lease, so the hourly job and an open admin page never walk one channel at once.
   checkLockedUntil    DateTime?
+  /// The channel's own playlists, walked like its uploads and then re-read daily for new ones.
+  isPlaylistsComplete Boolean?
+  playlistsPageToken  String?
+  playlistsCheckedAt  DateTime?
 
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -696,6 +700,12 @@ model Playlist {
   coverImage        String?
   channelTitle      String?
   youtubeChannelId  String?
+  /// The followed channel this playlist was found on (plan D10). Such playlists are re-synced
+  /// daily, since their new videos already arrive through the channel's own hourly check.
+  sourceChannelId   String?       @db.ObjectId
+  /// YouTube's own item count at the last full sync. When a cheap check finds it unchanged, the
+  /// item pages aren't read again, which is most of a playlist's cost.
+  youtubeItemCount  Int?
   thumbnails        Thumbnail[]
   syncStatus        SyncStatus    @default(NOT_APPLICABLE)
   metadataFetchedAt DateTime?
@@ -720,6 +730,7 @@ model Playlist {
   @@index([status, isArchived, isFeatured, displayOrder])
   @@index([metadataFetchedAt])
   @@index([titleSearch])
+  @@index([sourceChannelId])
 }
 
 model PlaylistItem {
@@ -1002,4 +1013,45 @@ model RateLimitBucket {
   key       String   @unique
   count     Int      @default(0)
   expiresAt DateTime
+}
+
+enum SourceDraftKind {
+  CHANNEL
+  PLAYLIST
+  VIDEOS
+}
+
+enum SourceDraftStatus {
+  WAITING
+  PROCESSING
+  ADDED
+  FAILED
+}
+
+/// A source someone wants added later, usually because the day's YouTube quota has run out.
+/// Saving one costs no quota: the link is only parsed. Adding it is the same as on Sources.
+model SourceDraft {
+  id            String            @id @default(auto()) @map("_id") @db.ObjectId
+  /// What the link points at, so the same source can't be queued twice.
+  key           String            @unique
+  input         String
+  kind          SourceDraftKind
+  label         String?
+  /// Why it's worth adding, for whoever reviews the queue.
+  note          String?
+  status        SourceDraftStatus @default(WAITING)
+  /// Added by the hourly job as soon as there's quota for it.
+  autoAdd       Boolean           @default(true)
+  attempts      Int               @default(0)
+  resultMessage String?
+  resultHref    String?
+  /// A short lease, so the hourly job and a person pressing the button never add it twice.
+  lockedUntil   DateTime?
+  createdById   String            @db.ObjectId
+  processedAt   DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([status, autoAdd, createdAt])
+  @@index([createdAt])
 }

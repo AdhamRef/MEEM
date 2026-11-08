@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { PrivacyNotice } from "@/components/legal/privacy-notice";
 import { BrandMark } from "@/components/shared/brand-mark";
 import { strings } from "@/config/strings.ar";
-import { AccountMenu } from "./account-menu";
 import { PrimaryNavigation } from "./primary-navigation";
 import { SiteFooter } from "./site-footer";
 
@@ -27,9 +26,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           <BrandMark className="size-10" />
         </Link>
         <PrimaryNavigation orientation="rail" />
-        <div className="mt-auto flex justify-center">
-          <AccountMenu />
-        </div>
       </nav>
 
       <header
@@ -39,7 +35,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Link href="/" aria-label={strings.app.name} className="rounded-xl">
           <BrandMark className="size-8" />
         </Link>
-        <AccountMenu />
       </header>
 
       <main

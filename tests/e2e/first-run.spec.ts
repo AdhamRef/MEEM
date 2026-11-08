@@ -179,8 +179,9 @@ test.describe("changing choices later", () => {
     await expect(flow(page)).toHaveCount(0);
   });
 
-  test("is one tap from the feed", async ({ page }) => {
-    await page.getByTestId("feed-customize").click();
+  test("is two taps from the feed, through the interests drawer", async ({ page }) => {
+    await page.getByTestId("interests-button").click();
+    await page.getByTestId("interests-add").click();
     await expect(page).toHaveURL(/\/interests$/);
     await expect(tile(page, "الفقه")).toHaveAttribute("aria-pressed", "true");
     await expect(channel(page, "الفقه")).toHaveAttribute("aria-checked", "true");

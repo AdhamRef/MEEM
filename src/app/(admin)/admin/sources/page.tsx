@@ -1,5 +1,5 @@
 /* eslint-disable @next/next/no-img-element -- Thumbnails load directly from YouTube by design, and aren't re-processed or re-hosted. */
-import { AlertTriangle, ListVideo, ShieldX, Tv } from "lucide-react";
+import { AlertTriangle, Inbox, ListVideo, ShieldX, Tv } from "lucide-react";
 import Link from "next/link";
 import { AddSourceForm } from "@/components/admin/sources/add-source-form";
 import { ChannelSourceActions } from "@/components/admin/sources/channel-source-actions";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { strings } from "@/config/strings.ar";
+import { countWaitingDrafts } from "@/features/youtube/sources/drafts.service";
 import { getSourcesOverview, listFollowedChannels, listSourcePlaylists, listUnfollowedChannels } from "@/features/youtube/sources/sources.service";
 import { checkPageAccess } from "@/lib/auth/guards";
 import { hasPermission } from "@/lib/permissions";
@@ -33,6 +34,14 @@ function ChannelStatus({ channel }: { channel: ChannelRow }) {
       <span className="flex w-full max-w-xs flex-col gap-1">
         <span className="font-medium text-brand">{total > 0 ? t.fetchingProgress(stored, total) : t.fetchingCount(stored)}</span>
         {total > 0 ? <ProgressBar value={stored} max={total} label={t.fetching} /> : <WorkingBar />}
+      </span>
+    );
+  }
+  if (channel.isPlaylistsComplete !== true) {
+    return (
+      <span className="flex w-full max-w-xs flex-col gap-1">
+        <span className="font-medium text-brand">{t.fetchingPlaylists}</span>
+        <WorkingBar />
       </span>
     );
   }
@@ -96,22 +105,31 @@ export default async function SourcesPage({ searchParams }: PageProps) {
   const tab = params.tab === "playlists" ? "playlists" : "channels";
   const query = params.query?.trim() || undefined;
 
-  const [overview, channels, unfollowed, playlists] = await Promise.all([
+  const [overview, channels, unfollowed, playlists, waitingDrafts] = await Promise.all([
     getSourcesOverview(actor),
     tab === "channels" ? listFollowedChannels(actor, { query, cursor: params.cursor }) : null,
     tab === "channels" && !query && !params.cursor ? listUnfollowedChannels(actor) : [],
     tab === "playlists" ? listSourcePlaylists(actor, { cursor: params.cursor }) : null,
+    countWaitingDrafts(actor),
   ]);
   const canCheck = overview.isConfigured;
-  const fetchingIds = (channels?.items ?? []).filter((channel) => channel.isBackfillComplete !== true && !channel.lastCheckError).map((channel) => channel.id);
+  const fetchingIds = (channels?.items ?? []).filter((channel) => (channel.isBackfillComplete !== true || channel.isPlaylistsComplete !== true) && !channel.lastCheckError).map((channel) => channel.id);
   const scheduleNote = !overview.autoCheckEnabled ? t.autoCheckOff : !overview.isScheduleConfigured ? t.scheduleMissing : null;
   const nextHref = (cursor: string) => `/admin/sources?${new URLSearchParams({ tab, ...(query ? { query } : {}), cursor })}`;
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-8">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">{t.title}</h1>
-        <p className="max-w-3xl text-sm text-text-secondary">{t.description}</p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold">{t.title}</h1>
+          <p className="max-w-3xl text-sm text-text-secondary">{t.description}</p>
+        </div>
+        <Button asChild variant="secondary" className="rounded-full" data-testid="drafts-link">
+          <Link href="/admin/sources/drafts">
+            <Inbox aria-hidden data-icon="inline-start" />
+            {t.draftsLink(waitingDrafts)}
+          </Link>
+        </Button>
       </header>
 
       <section className="space-y-2" aria-label={t.title}>
@@ -119,7 +137,7 @@ export default async function SourcesPage({ searchParams }: PageProps) {
           <StatTile label={t.overviewFollowed} value={formatNumber(overview.followedChannels)} />
           <StatTile label={t.overviewFetching} value={formatNumber(overview.fetchingChannels)} />
           <StatTile label={t.overviewPlaylists} value={formatNumber(overview.playlists)} />
-          <StatTile label={t.overviewQuota} value={t.overviewQuotaValue(overview.quotaUnitsToday, overview.quotaCeiling)} tone={overview.quotaUnitsToday >= overview.quotaCeiling ? "alert" : undefined} />
+          <StatTile label={t.overviewQuota} value={t.overviewQuotaValue(overview.quotaUnitsToday, overview.quotaDailyLimit)} hint={strings.quota.ceiling(formatNumber(overview.quotaCeiling))} tone={overview.quotaExhausted ? "alert" : undefined} testId="sources-quota" />
         </dl>
         <p className="text-xs text-text-secondary" data-testid="sources-schedule">
           {overview.lastScheduledRun ? t.lastRun(formatDate(overview.lastScheduledRun)) : t.noRunYet}

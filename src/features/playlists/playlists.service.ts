@@ -9,13 +9,13 @@ import { conflictOnDuplicate, cursorArgs, imageUrlSchema, optionalSlugSchema, op
 import { videoPickerLabel } from "@/features/relationships/picker.service";
 import { purgeContentReferences } from "@/features/relationships/references";
 import { publicVideoFilter } from "@/features/shorts/video-cards";
-import { MAX_YOUTUBE_PLAYLIST_ITEMS, playlistYouTubeFields, syncYouTubePlaylist } from "@/features/youtube/playlist-sync.service";
+import { createYouTubePlaylist, MAX_YOUTUBE_PLAYLIST_ITEMS, syncYouTubePlaylist } from "@/features/youtube/playlist-sync.service";
 import { AppError } from "@/lib/errors";
 import { assertPermission, type Actor } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { withTransaction } from "@/lib/prisma/transaction";
 import { buildSearchText, normalizeArabicForSearch } from "@/lib/search/normalize";
-import { decodeSlugParam, slugify } from "@/lib/slug";
+import { decodeSlugParam } from "@/lib/slug";
 import { YouTubeApiError } from "@/lib/youtube/client";
 import { parseYouTubePlaylistId } from "@/lib/youtube/ids";
 import { pickThumbnailUrl } from "@/lib/youtube/normalize";
@@ -101,17 +101,11 @@ export async function importYouTubePlaylist(actor: Actor | null, rawInput: unkno
     if (!metadata) throw new AppError("NOT_FOUND", strings.playlists.notFoundOnYouTube);
 
     const now = new Date();
-    const playlist = await withTransaction(async (tx) => {
-      const slug = await resolveSlug(slugify(metadata.title) ? metadata.title : youtubePlaylistId.toLowerCase(), null, slugIsTaken(tx));
-      const created = await tx.playlist.create({
-        data: { ...playlistYouTubeFields(metadata, now), type: "YOUTUBE", youtubePlaylistId, sourceKey, slug, status: "DRAFT", syncStatus: "PENDING" },
-      });
-      await recordAudit(tx, actor, { action: "playlist.import", entityType: "Playlist", entityId: created.id, metadata: { youtubePlaylistId } });
-      return created;
-    });
+    const id = await createYouTubePlaylist(metadata, { now });
+    await recordAudit(prisma, actor, { action: "playlist.import", entityType: "Playlist", entityId: id, metadata: { youtubePlaylistId } });
 
-    const report = await syncYouTubePlaylist(playlist.id, actor.id, now);
-    return { id: playlist.id, report };
+    const report = await syncYouTubePlaylist(id, actor.id, now);
+    return { id, report };
   } catch (error) {
     throw conflictOnDuplicate(toSyncError(error));
   }

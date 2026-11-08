@@ -47,6 +47,9 @@ async function seedChannel(options: { title?: string; isFollowed?: boolean; isBa
       isFollowed: options.isFollowed ?? true,
       followedAt: new Date(),
       isBackfillComplete: options.isBackfillComplete ?? true,
+      // Its playlists are read after its uploads, so a complete channel has those done too.
+      isPlaylistsComplete: options.isBackfillComplete ?? true,
+      playlistsCheckedAt: new Date(),
       lastCheckedAt: new Date(),
       youtubeVideoCount: 10,
     },
@@ -113,6 +116,34 @@ test.describe("content sources", () => {
     await page.goto("/admin/channels");
     await expect(page).toHaveURL(/\/admin\/sources$/);
     await expect(page.getByRole("navigation", { name: "تنقل لوحة التحكم" }).getByRole("link", { name: "مصادر المحتوى" })).toBeVisible();
+  });
+
+  test("the queue saves a source for later without quota, toggles auto, and removes it after confirming", async ({ page, baseURL }) => {
+    await signIn(page, "ADMIN", baseURL!);
+    const handle = `@queue${unique()}`;
+    await page.goto("/admin/sources");
+    await page.getByTestId("drafts-link").click();
+    await expect(page).toHaveURL(/\/admin\/sources\/drafts$/);
+    await expect(page.getByTestId("quota-meter").getByTestId("quota-used")).toBeVisible();
+
+    await page.getByTestId("draft-input").fill(`https://www.youtube.com/${handle}`);
+    await page.getByTestId("draft-label").fill("دروس نافعة");
+    await page.getByTestId("draft-note").fill("شروح موثوقة");
+    await page.getByTestId("draft-save").click();
+    await expect(page.getByTestId("draft-message")).toContainText("حُفظ");
+
+    const card = page.getByTestId("draft-card").filter({ hasText: handle });
+    await expect(card).toContainText("دروس نافعة");
+    await expect(card.getByTestId("draft-status")).toContainText("بالانتظار");
+    // The browser tests have no API key, so adding now explains why it's off.
+    await expect(card.getByTestId("draft-add-now")).toBeDisabled();
+
+    await card.getByTestId("draft-auto-toggle").click();
+    await expect(card.getByTestId("draft-auto-toggle")).toHaveAttribute("aria-checked", "false");
+
+    await card.getByTestId("draft-remove").click();
+    await page.getByTestId("confirm-yes").click();
+    await expect(page.getByTestId("draft-card").filter({ hasText: handle })).toHaveCount(0);
   });
 
   test("is closed to people who can't publish", async ({ page, baseURL }) => {
@@ -425,7 +456,9 @@ test.describe("the audit log, settings, and status", () => {
     await expect(page.getByTestId("youtube-save-message")).toHaveText("تم الحفظ.");
 
     await expect(page.getByTestId("statistics-note")).toBeVisible();
-    await expect(page.getByRole("checkbox")).toHaveCount(0);
+    // The only switch is the hourly check (plan D10). Statistics have none.
+    await expect(page.getByRole("checkbox")).toHaveCount(1);
+    await expect(page.getByTestId("auto-check-enabled")).toBeVisible();
   });
 
   test("only the super admin reaches settings", async ({ page, baseURL }) => {
@@ -453,6 +486,7 @@ test.describe("the audit log, settings, and status", () => {
     await expect(page.getByTestId("recent-activity").or(page.getByText("لا يوجد نشاط مسجل بعد."))).toBeVisible();
 
     const nav = page.getByRole("navigation", { name: "تنقل لوحة التحكم" });
+    // The importer and channels became Sources, with its queue beside it (plan D10).
     await expect(nav.getByRole("link")).toHaveCount(14);
 
     await signIn(page, "CONTRIBUTOR", baseURL!);

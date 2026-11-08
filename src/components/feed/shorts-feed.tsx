@@ -1,6 +1,6 @@
 "use client";
 
-import { Clapperboard, RotateCw, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { Clapperboard, RotateCw, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -9,7 +9,6 @@ import { StateMessage } from "@/components/shared/state-message";
 import { Button } from "@/components/ui/button";
 import { preconnect } from "react-dom";
 import { FEED_ACTIVE_THRESHOLD, FEED_BUFFER_AHEAD, FEED_CROP_PIXELS, FEED_IMMERSIVE_OVERLAY, FEED_LOAD_AHEAD, FEED_PAUSE_THRESHOLD, FEED_PLAYER_STRATEGY, FEED_PRELOAD_THUMBNAILS } from "@/config/feed";
-import { AccountMenu } from "@/components/layout/account-menu";
 import { strings } from "@/config/strings.ar";
 import { readGuestBehaviour, recordGuestSignal } from "@/features/recommendations/guest-signals";
 import { sendView } from "@/components/knowledge/view-recorder";
@@ -24,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { FeedCard, feedVideoRatio } from "./feed-card";
 import { ImmersiveFeedCard } from "./feed-card-immersive";
 import { FeedLoader } from "./feed-loader";
+import { InterestsDrawer } from "./interests-drawer";
 
 const Card = FEED_IMMERSIVE_OVERLAY ? ImmersiveFeedCard : FeedCard;
 import { useFeedPages } from "./use-feed-pages";
@@ -83,20 +83,6 @@ const SOUND_SWIPE_DISTANCE = 40;
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** Choices stay one tap away from the feed they shape. */
-function CustomizeLink() {
-  return (
-    <Link
-      href="/interests"
-      aria-label={strings.feed.editChoices}
-      title={strings.feed.editChoices}
-      data-testid="feed-customize"
-      className="flex size-11 shrink-0 items-center justify-center self-center rounded-full text-white/85 outline-none transition-colors hover:text-white focus-visible:ring-3 focus-visible:ring-ring/50"
-    >
-      <SlidersHorizontal aria-hidden className="size-5" strokeWidth={1.75} />
-    </Link>
-  );
-}
 
 export function ShortsFeed({ initialVideo }: ShortsFeedProps) {
   const { status: preferencesStatus, isGuest, selectedTopicIds, channelChoices } = usePreferences();
@@ -450,33 +436,12 @@ export function ShortsFeed({ initialVideo }: ShortsFeedProps) {
   return (
     // The attribute hides the phone top bar, in globals.css, so the video gets that height too.
     <div className="relative flex flex-col" data-immersive-feed>
-      {topics.length > 0 ? (
-        <div role="group" aria-label={strings.feed.tabsLabel} className={cn("flex h-(--feed-tabs-height) items-stretch gap-1 overflow-x-auto px-2 text-white md:justify-center-safe", FEED_IMMERSIVE_OVERLAY ? "absolute inset-x-0 top-0 z-40 bg-linear-to-b from-black/70 to-transparent" : "bg-black")} data-testid="feed-tabs">
-          <div className="flex shrink-0 items-center md:hidden">
-            <AccountMenu />
-          </div>
-          <CustomizeLink />
-          {[{ id: null as string | null, title: strings.feed.forYou }, ...topics].map((tab) => (
-            <button
-              key={tab.id ?? "for-you"}
-              type="button"
-              aria-pressed={selectedTopicId === tab.id}
-              onClick={() => selectTab(tab.id)}
-              className={cn(
-                "shrink-0 border-b-2 px-3 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset",
-                selectedTopicId === tab.id ? "border-white font-semibold text-white" : "border-transparent text-white/70 hover:text-white",
-              )}
-            >
-              {tab.title}
-            </button>
-          ))}
+      {/* One button, top left, instead of a row of scrolling tabs. It opens the person's interests. */}
+      <div className={cn("pointer-events-none flex h-(--feed-tabs-height) items-center justify-end px-3", FEED_IMMERSIVE_OVERLAY ? "absolute inset-x-0 top-0 z-40 bg-linear-to-b from-black/50 to-transparent" : "bg-black")} data-testid="feed-tabs">
+        <div className="pointer-events-auto">
+          <InterestsDrawer topics={topics} selectedTopicIds={selectedTopicIds} activeTopicId={selectedTopicId} onSelect={selectTab} />
         </div>
-      ) : (
-        <div className={cn("flex h-(--feed-tabs-height) items-center justify-between px-2 text-white md:hidden", FEED_IMMERSIVE_OVERLAY ? "absolute inset-x-0 top-0 z-40" : "bg-black")}>
-          <AccountMenu />
-          <CustomizeLink />
-        </div>
-      )}
+      </div>
 
       <div
         ref={scrollerRef}

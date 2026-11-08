@@ -3,13 +3,14 @@ import type { Prisma } from "@prisma/client";
 import { strings } from "@/config/strings.ar";
 import { isUniqueConstraintError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
-import { fetchUploadsPage } from "@/lib/youtube/channels";
+import { fetchChannelBatch, fetchUploadsPage } from "@/lib/youtube/channels";
 import { YouTubeApiError } from "@/lib/youtube/client";
 import { classifyByDuration } from "@/lib/youtube/normalize";
 import { getQuotaUsage } from "@/lib/youtube/quota";
 import { fetchVideoBatch } from "@/lib/youtube/videos";
 import { getYouTubeSettings, type YouTubeSettings } from "../settings.service";
 import { youtubeFields } from "../video-persistence";
+import { arePlaylistsDue, walkChannelPlaylists } from "./channel-playlists.service";
 
 const MAX_FEED_KEY = 2 ** 31 - 1;
 /** Longer than any one check may run, so a check that died mid-way frees the channel soon after. */
@@ -19,6 +20,10 @@ export type CheckStopReason = "QUOTA_CEILING" | "QUOTA_EXCEEDED" | "NOT_CONFIGUR
 
 export interface ChannelCheckResult {
   added: number;
+  /** Playlists of the channel published by this check. */
+  playlistsAdded: number;
+  /** True once the channel's playlists have been read through at least once. */
+  arePlaylistsComplete?: boolean;
   isBackfillComplete: boolean;
   stoppedBy: CheckStopReason | null;
 }
@@ -118,19 +123,21 @@ export async function checkChannel(channelId: string, { deadline, enforceQuotaCe
   const now = new Date();
   const channel = await prisma.youTubeChannel.findUnique({
     where: { id: channelId },
-    select: { isFollowed: true, uploadsPlaylistId: true, isBackfillComplete: true, backfillPageToken: true },
+    select: { youtubeChannelId: true, youtubeVideoCount: true, isFollowed: true, uploadsPlaylistId: true, isBackfillComplete: true, backfillPageToken: true, isPlaylistsComplete: true, playlistsCheckedAt: true },
   });
-  if (!channel || channel.isFollowed !== true) return { added: 0, isBackfillComplete: false, stoppedBy: "NOT_FOLLOWED" };
+  if (!channel || channel.isFollowed !== true) return { added: 0, playlistsAdded: 0, isBackfillComplete: false, stoppedBy: "NOT_FOLLOWED" };
   const wasComplete = channel.isBackfillComplete === true;
   if (!channel.uploadsPlaylistId) {
     await prisma.youTubeChannel.update({ where: { id: channelId }, data: { lastCheckedAt: now, lastCheckError: checkErrorMessage("NO_UPLOADS") } });
-    return { added: 0, isBackfillComplete: wasComplete, stoppedBy: "NO_UPLOADS" };
+    return { added: 0, playlistsAdded: 0, isBackfillComplete: wasComplete, stoppedBy: "NO_UPLOADS" };
   }
-  if (!(await acquireLease(channelId, now, deadline))) return { added: 0, isBackfillComplete: wasComplete, stoppedBy: "BUSY" };
+  if (!(await acquireLease(channelId, now, deadline))) return { added: 0, playlistsAdded: 0, isBackfillComplete: wasComplete, stoppedBy: "BUSY" };
 
   const settings = await getYouTubeSettings();
   const uploads = channel.uploadsPlaylistId;
   let added = 0;
+  let playlistsAdded = 0;
+  let arePlaylistsComplete = channel.isPlaylistsComplete === true;
   let isComplete = wasComplete;
   let stoppedBy: CheckStopReason | null = null;
   let pagesRead = 0;
@@ -146,8 +153,25 @@ export async function checkChannel(channelId: string, { deadline, enforceQuotaCe
   };
 
   try {
+    // A channel already stored in full, such as one from the old importer, needs no walk: reading
+    // 12,000 known videos again would cost 240 units to find nothing. YouTube's count costs 1.
+    if (!wasComplete && !channel.backfillPageToken) {
+      let total = channel.youtubeVideoCount;
+      if (total === null) {
+        const [fresh] = await fetchChannelBatch([channel.youtubeChannelId]);
+        pagesRead += 1;
+        total = fresh?.videoCount ?? null;
+        if (total !== null) await prisma.youTubeChannel.update({ where: { id: channelId }, data: { youtubeVideoCount: total } });
+      }
+      const stored = await prisma.video.count({ where: { channelId } });
+      if (total !== null && stored >= total) {
+        isComplete = true;
+        await prisma.youTubeChannel.update({ where: { id: channelId }, data: { isBackfillComplete: true, backfillPageToken: null } });
+      }
+    }
+
     // New uploads first. While the first fetch hasn't started, it begins at the top anyway.
-    if (wasComplete || channel.backfillPageToken) {
+    if (isComplete || channel.backfillPageToken) {
       let token: string | null = null;
       while (await mayReadPage()) {
         const page = await fetchUploadsPage(uploads, token);
@@ -171,6 +195,15 @@ export async function checkChannel(channelId: string, { deadline, enforceQuotaCe
         if (isComplete) break;
       }
     }
+
+    // Playlists come after the uploads, so the videos in them are mostly stored already and cost no metadata quota.
+    if (isComplete && !stoppedBy && Date.now() < deadline.getTime() && arePlaylistsDue(channel, now)) {
+      const playlists = await walkChannelPlaylists(channelId, { deadline, enforceQuotaCeiling });
+      playlistsAdded = playlists.added;
+      arePlaylistsComplete = playlists.isComplete;
+      pagesRead += 1;
+      if (playlists.stoppedBy) stoppedBy = playlists.stoppedBy;
+    }
   } catch (error) {
     stoppedBy = stopReasonOf(error);
   }
@@ -184,5 +217,22 @@ export async function checkChannel(channelId: string, { deadline, enforceQuotaCe
       lastCheckError: stoppedBy ? checkErrorMessage(stoppedBy) : null,
     },
   });
-  return { added, isBackfillComplete: isComplete, stoppedBy };
+  return { added, playlistsAdded, arePlaylistsComplete, isBackfillComplete: isComplete, stoppedBy };
+}
+
+/**
+ * Only a channel's playlists, for channels saved without being followed, such as those added
+ * with the old importer, so their playlists aren't lost (plan D10). Their uploads aren't walked.
+ */
+export async function checkChannelPlaylists(channelId: string, options: CheckOptions): Promise<{ added: number; stoppedBy: CheckStopReason | null }> {
+  const now = new Date();
+  if (!(await acquireLease(channelId, now, options.deadline))) return { added: 0, stoppedBy: "BUSY" };
+  let result: { added: number; stoppedBy: CheckStopReason | null } = { added: 0, stoppedBy: null };
+  try {
+    const walk = await walkChannelPlaylists(channelId, options);
+    result = { added: walk.added, stoppedBy: walk.stoppedBy };
+  } finally {
+    await prisma.youTubeChannel.update({ where: { id: channelId }, data: { checkLockedUntil: null } });
+  }
+  return result;
 }

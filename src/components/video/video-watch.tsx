@@ -19,7 +19,8 @@ import type { VideoCard } from "@/features/shorts/types";
 import { useActivePlayer } from "@/hooks/useActivePlayer";
 import { cn } from "@/lib/utils";
 import { ImmersiveVideoFrame } from "./immersive-video-frame";
-import { AutoplayCountdown, AutoplaySwitch, UpNextItem } from "./up-next";
+import { EndScreen } from "./end-screen";
+import { AutoplaySwitch, UpNextItem } from "./up-next";
 import { SaveButton, ShareButton, YouTubeAttribution } from "./video-actions";
 import { VideoDescription } from "./video-description";
 import { YouTubeComments } from "./youtube-comments";
@@ -77,7 +78,6 @@ export function VideoWatch({ video, related, upNext = [], channelShorts = [] }: 
   const isGuestRef = useRef(true);
   const [isTheater, setIsTheater] = useState(false);
   const [isAutoplayOn, setIsAutoplayOn] = useState(true);
-  const [isCountdownCancelled, setIsCountdownCancelled] = useState(false);
   const chapters = useMemo(() => extractChapters(video.description, video.durationSeconds), [video.description, video.durationSeconds]);
   useRecordView("VIDEO", video.id);
 
@@ -106,9 +106,7 @@ export function VideoWatch({ video, related, upNext = [], channelShorts = [] }: 
   };
 
   const nextVideo = upNext[0];
-  const playNext = useCallback(() => {
-    if (nextVideo) router.push(`/videos/${nextVideo.id}`);
-  }, [nextVideo, router]);
+  const playVideo = useCallback((target: VideoCard) => router.push(`/videos/${target.id}`), [router]);
 
   useEffect(() => {
     if (sessionStatus !== "authenticated") return;
@@ -188,20 +186,13 @@ export function VideoWatch({ video, related, upNext = [], channelShorts = [] }: 
     };
   }, [tracksProgress, state, video.id, getPosition]);
 
-  useEffect(() => {
-    // A new ending gets a new countdown.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting a choice that belongs to one ending.
-    if (state !== "ended") setIsCountdownCancelled(false);
-  }, [state]);
-
   const playerMessage = state === "error" ? (errorCode === null ? strings.feed.playerLoadFailed : strings.feed.playerFailed) : null;
   const ctaLabel = video.cta?.label ?? strings.feed.ctaDefaults[video.cta?.type ?? "EXTERNAL_RESOURCE"];
   const path = `/videos/${video.id}`;
   const theaterFrame = isTheater && isLong;
 
   // Only where the owner's exception applies. Elsewhere YouTube's end screen stays, with no auto-skip (R5).
-  const endScreen =
-    FEED_IMMERSIVE_OVERLAY && isAutoplayOn && nextVideo && !isCountdownCancelled ? <AutoplayCountdown next={nextVideo} onPlay={playNext} onCancel={() => setIsCountdownCancelled(true)} /> : undefined;
+  const endScreen = FEED_IMMERSIVE_OVERLAY && upNext.length ? <EndScreen suggestions={upNext} isAutoplayOn={isAutoplayOn} onAutoplayChange={changeAutoplay} onReplay={() => resumeAt(0)} onPlay={playVideo} /> : undefined;
 
   const player = FEED_IMMERSIVE_OVERLAY ? (
     <ImmersiveVideoFrame
@@ -242,10 +233,16 @@ export function VideoWatch({ video, related, upNext = [], channelShorts = [] }: 
         One grid, so the player keeps its place in the page and is never remounted when the layout
         changes. In theater mode it spans both columns on a black band.
       */}
-      <div className={cn(hasSide && "lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)] lg:gap-x-6", theaterFrame && "lg:gap-y-4")}>
-        <div className={cn("lg:row-start-1", theaterFrame ? "bg-black lg:col-span-2" : "lg:col-start-1")}>{player}</div>
+      {/*
+        The side column spans every row, and a tall one used to stretch them all, pushing the title
+        and the comments far apart. Only the last row takes the slack now. On phones, the order is
+        player, details, comments, then suggestions, as on YouTube.
+      */}
+      <div className={cn("flex flex-col", hasSide && "lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)] lg:grid-rows-[auto_auto_1fr] lg:gap-x-6", theaterFrame && "lg:gap-y-4")}>
+        {/* Pinned while the page scrolls under it, except in theater mode, where it would fill the screen. The wrapper is what sticks, because a sticky element only moves within its parent. */}
+        <div className={cn("sticky top-(--top-bar-height) z-20 order-1 md:top-0 lg:order-none lg:row-start-1 lg:self-start", theaterFrame ? "bg-black lg:static lg:col-span-2" : "lg:col-start-1")}>{player}</div>
 
-        <div className={cn("min-w-0 space-y-4 px-4 pt-3 lg:col-start-1 lg:row-start-2", sidePadding)}>
+        <div className={cn("order-2 min-w-0 space-y-4 px-4 pt-3 lg:order-none lg:col-start-1 lg:row-start-2", sidePadding)}>
           <h1 dir="auto" className="text-start text-lg leading-snug font-bold sm:text-xl">
             {video.title}
           </h1>
@@ -368,7 +365,7 @@ export function VideoWatch({ video, related, upNext = [], channelShorts = [] }: 
         {hasSide ? (
         <aside
           aria-labelledby="up-next-title"
-          className={cn("min-w-0 space-y-4 px-4 pt-6 lg:col-start-2", theaterFrame ? "lg:row-span-2 lg:row-start-2 lg:ps-0 lg:pe-6 lg:pt-3" : "lg:row-span-3 lg:row-start-1 lg:px-0 lg:pt-0")}
+          className={cn("order-4 min-w-0 space-y-4 px-4 pt-6 lg:order-none lg:col-start-2 lg:self-start", theaterFrame ? "lg:row-span-2 lg:row-start-2 lg:ps-0 lg:pe-6 lg:pt-3" : "lg:row-span-3 lg:row-start-1 lg:px-0 lg:pt-0")}
           data-testid="up-next"
         >
           <div className="flex items-center justify-between gap-2">
@@ -390,9 +387,9 @@ export function VideoWatch({ video, related, upNext = [], channelShorts = [] }: 
               <h2 id="channel-shorts-title" className="text-base font-semibold">
                 {w.channelShorts}
               </h2>
-              <ul className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-2 lg:mx-0 lg:grid lg:grid-cols-3 lg:overflow-visible lg:px-0">
+              <ul className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-2 lg:mx-0 lg:grid lg:grid-cols-2 lg:overflow-visible lg:px-0">
                 {channelShorts.map((short) => (
-                  <li key={short.id} className="w-32 shrink-0 snap-start lg:w-auto">
+                  <li key={short.id} className="w-36 shrink-0 snap-start lg:w-auto">
                     <ExploreShortCard video={short} />
                   </li>
                 ))}
@@ -402,7 +399,7 @@ export function VideoWatch({ video, related, upNext = [], channelShorts = [] }: 
         </aside>
         ) : null}
 
-        <div className={cn("min-w-0 px-4 pt-6 lg:col-start-1 lg:row-start-3", sidePadding)}>
+        <div className={cn("order-3 min-w-0 px-4 pt-6 lg:order-none lg:col-start-1 lg:row-start-3", sidePadding)}>
           <YouTubeComments videoId={video.id} youtubeVideoId={video.youtubeVideoId} />
         </div>
       </div>

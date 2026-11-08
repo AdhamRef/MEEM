@@ -28,7 +28,7 @@ function NavigationItem({ destination, pathname }: { destination: NavigationDest
     );
   }
 
-  const isActive = isDestinationActive(destination.href, pathname);
+  const isActive = isDestinationActive(destination.href, pathname, destination.includes);
 
   return (
     <Link

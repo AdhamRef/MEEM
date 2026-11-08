@@ -9,7 +9,7 @@ import { assertPermission, hasPermission, type Actor } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { withTransaction } from "@/lib/prisma/transaction";
 import { isYouTubeApiConfigured } from "@/lib/youtube/client";
-import { getQuotaUsage } from "@/lib/youtube/quota";
+import { getQuotaUsage, YOUTUBE_DAILY_QUOTA } from "@/lib/youtube/quota";
 import { recordAudit } from "./audit";
 
 const MS_PER_DAY = 86_400_000;
@@ -151,7 +151,6 @@ export async function updateYouTubeSettings(actor: Actor | null, rawInput: unkno
 // YouTube integration status
 // ---------------------------------------------------------------------------
 
-const DEFAULT_DAILY_QUOTA = 10_000;
 
 export interface IntegrationStatus {
   isConfigured: boolean;
@@ -185,7 +184,7 @@ export async function getIntegrationStatus(actor: Actor | null, now = new Date()
   return {
     isConfigured: isYouTubeApiConfigured(),
     statisticsEnabled: settings.statisticsEnabled,
-    quota: { unitsToday: quota.units, exhausted: quota.exhausted, dailyLimit: DEFAULT_DAILY_QUOTA, recentDays },
+    quota: { unitsToday: quota.units, exhausted: quota.exhausted, dailyLimit: YOUTUBE_DAILY_QUOTA, recentDays },
     refresh: { afterDays: settings.refreshAfterDays, videosDue, videosPastLimit, playlistsDue, channelsDue, lastRun: lastRun?.createdAt ?? null },
     sources: { followedChannels, fetchingChannels },
     cronConfigured: Boolean(process.env.CRON_SECRET),

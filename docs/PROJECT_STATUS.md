@@ -6,6 +6,45 @@ Last updated: 2026-11-06
 
 Everything the owner needs to do, across all phases, is in [OWNER_ACTIONS.md](OWNER_ACTIONS.md).
 
+## Latest changes, 2026-11-08: feed, account, Explore, and video page
+
+The owner's request, not committed.
+
+| Change | What it does | Verified |
+|---|---|---|
+| **Feed interests** | The row of scrolling topic tabs is gone. One button, top left, opens a sheet with "for you", the person's own topics, and the rest, plus "أضف اهتمامات جديدة" leading to \`/interests\`. The sheet is shadcn's Sheet pattern on the Radix dialog already in use, so no new package. | Browser tests updated, **not run yet**. |
+| **حسابي** | The account icon is gone from the top bar, the rail, and the feed. The bottom tab "مكتبتي" became "حسابي", a hub for guests and accounts: profile or sign-in, the library (saved, history), interests, the dashboard for staff, privacy and terms, sign-out, and account deletion. The tab stays marked on the library pages. | \`navigation.test.ts\`. Browser tests updated, **not run yet**. |
+| **Explore** | Video cards sit 16px in from the screen edge on phones, with rounded corners. Desktop shows at most four across. A tighter search and chip row, with the chips fading at the edges. | Type check and lint. **Not seen in a browser.** |
+| **Video page** | Fixed the long gaps: the tall suggestions column was stretching every grid row, so the title and comments sat far apart. Only the last row stretches now. On phones the order is player, details, comments, then suggestions. Channel Shorts show two per row. | Type check and lint. **Not seen in a browser.** |
+| **End screen** | At the end, six suggestions on a blurred backdrop, as YouTube shows them, two on a phone. With autoplay on, the first counts down on a ring and plays, and can be stopped. Replay and an autoplay switch sit with them. Under \`FEED_IMMERSIVE_OVERLAY\` only, as before. | Type check and lint. **Not run in a browser.** |
+
+## Latest changes, 2026-11-08: quota use, and the source queue
+
+**What used the quota.** The Atlas database's own records say: 788 units on 2026-11-08, Pacific time, and nothing exhausted. 453 went on `playlistItems` and 334 on `videos`. All of it came from the Sources page fetching channels while it was open, 62 checks over three days. No scheduled run has happened yet, because the GitHub schedule isn't set up. The tile read "0 / 8000" after the midnight reset: units **used**, out of the hourly check's ceiling, not credits left. It now shows use out of YouTube's 10,000.
+
+| Change | What it does | Verified |
+|---|---|---|
+| **No re-walk of stored channels** | Old imported channels, such as the two of Mustafa al-Adawi at 11,000 to 12,000 videos, were being walked page by page to find nothing new, at 1 unit per 50 videos. A first check now reads YouTube's upload count for 1 unit and, if the site already holds that many, skips the walk. | Integration tests: skipped when complete, still walked when videos are missing. |
+| **Unchanged playlists cost 1 unit** | YouTube's item count comes with each playlist's details, and is stored. A playlist added on its own is checked hourly, and its item pages are read only when the count changed. A channel's playlists are re-synced from its daily list read, 50 per unit, only when theirs changed. The 30-day refresh still does a full sync. | Integration tests for both. |
+| **Quota meter** | Used out of 10,000, remaining, the hourly check's ceiling, and a live countdown to the reset at midnight in Los Angeles. | `quota-reset.test.ts` for the reset time. Browser test written, **not run**. |
+| **Source queue** at `/admin/sources/drafts` | Save a channel, playlist, or videos with a name and a note, for no quota. Add one now, add all waiting, or leave it to the hourly job, which adds auto ones as the person who queued them, with their current permissions, once there's quota. Quota trouble sends it back to waiting. Duplicates and sources already on the site are refused. | `source-drafts.test.ts`: 8 tests, including quota exhaustion, the hourly job, and revoked permissions. Browser test written, **not run**. |
+
+Schema: `SourceDraft` is new, with `SourceDraftKind` and `SourceDraftStatus`. `Playlist` gains `youtubeItemCount`. Run `npm run db:sync`.
+
+## Latest changes, 2026-11-08: channel playlists
+
+The owner's request, not committed.
+
+| Change | What it does | Verified |
+|---|---|---|
+| **A channel's playlists** | After a followed channel's uploads are all in, its own playlists are added, synced, and published once they have items, each with its own page. Empty ones are skipped. Its list is read again daily for new playlists. | `sources.test.ts`: order, skipping empty lists, no duplicates on a second walk, and the daily re-read. |
+| **Old channels keep their playlists** | Channels added with the old importer and never followed get their playlists from the hourly job, without their uploads being walked or the channel being followed. | Integration test. **Not run on the real database:** it needs the schedule running, or follow the channel. |
+| **Two sync cadences** | A playlist added on its own is re-synced hourly. One found on a channel is re-synced daily, since its videos already arrive through the channel. A channel playlist someone unpublished stays unpublished. | Integration tests for both cadences and for "unpublished stays unpublished". |
+| **Dashboard** | The Sources list shows when a channel's playlists are still being fetched, and a channel's page lists its playlists. | Type check and lint only. |
+| **Fixes from the last browser run** | The video player stays pinned while scrolling again. It broke in the new layout and is now pinned by its wrapper, except in theater mode. Two dashboard tests were updated for the hourly-check switch and the merged Sources menu item. | **Browser tests not re-run yet.** The last run crashed 117 times from lack of memory, so nothing in it beyond those 3 failures says anything about the code. |
+
+Schema: `YouTubeChannel` gains `isPlaylistsComplete`, `playlistsPageToken`, and `playlistsCheckedAt`, and `Playlist` gains `sourceChannelId` with an index. All optional, so existing data reads unchanged. `npm run db:sync` adds the index.
+
 ## Latest changes, 2026-11-07: watch, playlist, and article pages
 
 The owner's request, and nothing is committed. Every addition reads stored data, so none of it spends quota. Only comments, opened on request, do, as before.

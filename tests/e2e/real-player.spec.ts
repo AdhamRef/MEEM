@@ -56,7 +56,8 @@ test.beforeAll(async () => {
 async function openTopic(page: Page) {
   await page.addInitScript(() => window.localStorage.setItem("preferences.v2", JSON.stringify({ version: 2, selectedTopicIds: [], channelChoices: {}, onboarding: "skipped" })));
   await page.goto("/");
-  await page.getByTestId("feed-tabs").getByRole("button", { name: "اختبار المشغل" }).click();
+  await page.getByTestId("interests-button").click();
+  await page.getByTestId("interests-drawer").getByRole("button", { name: "اختبار المشغل", exact: true }).click();
 }
 
 const activeFrame = (page: Page) => page.locator('[data-player-role="active"] iframe');

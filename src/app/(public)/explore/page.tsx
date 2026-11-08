@@ -21,7 +21,7 @@ const e = strings.explore;
 
 export const metadata: Metadata = { title: e.pageTitle, description: e.pageDescription, alternates: { canonical: "/explore" } };
 
-const chipClass = "inline-flex min-h-11 shrink-0 items-center rounded-lg px-3 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 md:min-h-9";
+const chipClass = "inline-flex min-h-9 shrink-0 items-center rounded-lg px-3.5 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50";
 
 function Chip({ href, isActive, testId, children }: { href: string; isActive: boolean; testId?: string; children: string }) {
   return (
@@ -127,12 +127,13 @@ export default async function ExplorePage({ searchParams }: { searchParams: Prom
     <div className="w-full" data-testid="explore-page">
       <h1 className="sr-only">{e.pageTitle}</h1>
 
-      <div className="sticky top-(--top-bar-height) z-20 border-b bg-background/95 backdrop-blur-sm md:top-0">
-        <div className="mx-auto max-w-2xl px-4 pt-3 md:px-6" data-testid="explore-search">
+      {/* One compact block, as on YouTube: search, then a single row of chips that scrolls on its own. */}
+      <div className="sticky top-(--top-bar-height) z-20 bg-background/90 backdrop-blur-md md:top-0">
+        <div className="mx-auto max-w-2xl px-4 pt-2.5 md:px-6 md:pt-4" data-testid="explore-search">
           <SearchBox initialQuery="" isCompact />
         </div>
         {topics.length ? (
-          <nav aria-label={e.topics} data-testid="section-topics" className="scroll-row flex gap-2 overflow-x-auto px-4 py-3 md:px-6">
+          <nav aria-label={e.topics} data-testid="section-topics" className="scroll-row flex gap-2 overflow-x-auto px-4 py-2.5 [mask-image:linear-gradient(to_left,transparent,black_1rem,black_calc(100%-1rem),transparent)] md:justify-center-safe md:px-6 md:py-3">
             <Chip href="/explore" isActive={selected === null}>
               {e.all}
             </Chip>
@@ -147,7 +148,7 @@ export default async function ExplorePage({ searchParams }: { searchParams: Prom
         )}
       </div>
 
-      <div className="px-4 pt-4 pb-10 md:px-6">
+      <div className="mx-auto max-w-[1800px] px-4 pt-3 pb-10 md:px-6 md:pt-5">
         {isEmpty ? (
           <StateMessage icon={Compass} title={selected ? e.emptyTopicTitle : e.emptyTitle} description={selected ? e.emptyTopicDescription : e.emptyDescription} />
         ) : (

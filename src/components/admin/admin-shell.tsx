@@ -15,7 +15,7 @@ export function AdminShell({ actor, children }: { actor: Actor; children: ReactN
   const can = (permission: Permission) => hasPermission(actor, permission);
   const sections: AdminNavKey[] = [
     "overview",
-    ...(can("youtube.import") && can("content.publish") ? (["sources"] as const) : []),
+    ...(can("youtube.import") && can("content.publish") ? (["sources", "sourceDrafts"] as const) : []),
     ...(can("content.viewAny") ? (["shorts"] as const) : []),
     "articles",
     ...(can("topics.manage") ? (["topics"] as const) : []),

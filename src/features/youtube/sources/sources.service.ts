@@ -11,12 +11,17 @@ import { withTransaction } from "@/lib/prisma/transaction";
 import { resolveChannel, type NormalizedChannel } from "@/lib/youtube/channels";
 import { isYouTubeApiConfigured, YouTubeApiError } from "@/lib/youtube/client";
 import { pickThumbnailUrl } from "@/lib/youtube/normalize";
-import { getQuotaUsage } from "@/lib/youtube/quota";
+import { getQuotaUsage, nextQuotaReset, YOUTUBE_DAILY_QUOTA } from "@/lib/youtube/quota";
 import { syncYouTubePlaylist } from "../playlist-sync.service";
 import { getYouTubeSettings } from "../settings.service";
 import { importVideosByInput } from "../video-import.service";
-import { checkChannel, type ChannelCheckResult, type CheckStopReason } from "./channel-check.service";
+import { checkChannel, checkChannelPlaylists, type ChannelCheckResult, type CheckStopReason } from "./channel-check.service";
+import { PLAYLIST_RESCAN_HOURS } from "./channel-playlists.service";
+import type { AddSourceResult } from "./describe";
 import { detectSourceInput } from "./detect";
+// The queue adds sources through this module and this module runs the queue. Each only calls
+// the other inside functions, so the circular import is safe.
+import { runAutoDrafts } from "./drafts.service";
 
 const t = strings.sources;
 const MS_PER_MINUTE = 60_000;
@@ -43,10 +48,7 @@ function toApiError(error: unknown): AppError | null {
   return new AppError("EXTERNAL_UNAVAILABLE", t.youtubeFailed);
 }
 
-export type AddSourceResult =
-  | { kind: "channel"; id: string; title: string; wasFollowed: boolean }
-  | { kind: "playlist"; id: string; title: string; isPublished: boolean; importedVideos: number }
-  | { kind: "videos"; imported: number; duplicates: number; notFound: number };
+export type { AddSourceResult } from "./describe";
 
 const addSchema = z.strictObject({ input: z.string().trim().min(1).max(5000) });
 
@@ -180,6 +182,7 @@ const channelSelect = {
   youtubeVideoCount: true,
   isFollowed: true,
   isBackfillComplete: true,
+  isPlaylistsComplete: true,
   lastCheckedAt: true,
   lastCheckError: true,
   topics: { select: { topic: { select: { title: true } } } },
@@ -234,6 +237,20 @@ export async function getSourceChannel(actor: Actor | null, rawId: unknown) {
   return withCounts!;
 }
 
+/** A channel's playlists, found on it or added on their own, for its page in the dashboard. */
+export async function listChannelPlaylists(actor: Actor | null, rawId: unknown) {
+  assertPermission(actor, "youtube.import");
+  const channel = await prisma.youTubeChannel.findUnique({ where: { id: parseId(rawId) }, select: { id: true, youtubeChannelId: true } });
+  if (!channel) throw new AppError("NOT_FOUND");
+  const rows = await prisma.playlist.findMany({
+    where: { type: "YOUTUBE", isArchived: false, OR: [{ sourceChannelId: channel.id }, { youtubeChannelId: channel.youtubeChannelId }] },
+    orderBy: { id: "desc" },
+    take: 100,
+    select: { id: true, title: true, itemCount: true, status: true, syncStatus: true, thumbnails: true },
+  });
+  return rows.map(({ thumbnails, ...row }) => ({ ...row, thumbnailUrl: pickThumbnailUrl(thumbnails) }));
+}
+
 export async function listSourcePlaylists(actor: Actor | null, rawInput: unknown = {}) {
   assertPermission(actor, "youtube.import");
   const parsed = listSchema.safeParse(rawInput);
@@ -259,7 +276,11 @@ export interface SourcesOverview {
   playlists: number;
   lastScheduledRun: Date | null;
   quotaUnitsToday: number;
+  /** YouTube's allowance for the day. The ceiling is the share the hourly check may use. */
+  quotaDailyLimit: number;
   quotaCeiling: number;
+  quotaExhausted: boolean;
+  quotaResetsAt: Date;
 }
 
 /** Read from stored data, so opening the page spends no quota. */
@@ -282,7 +303,10 @@ export async function getSourcesOverview(actor: Actor | null): Promise<SourcesOv
     playlists,
     lastScheduledRun: lastRun?.createdAt ?? null,
     quotaUnitsToday: quota.units,
+    quotaDailyLimit: YOUTUBE_DAILY_QUOTA,
     quotaCeiling: settings.autoCheckQuotaCeiling,
+    quotaExhausted: quota.exhausted || quota.units >= YOUTUBE_DAILY_QUOTA,
+    quotaResetsAt: nextQuotaReset(),
   };
 }
 
@@ -290,6 +314,10 @@ export interface ScheduledCheckReport {
   skipped: "DISABLED" | "NOT_CONFIGURED" | null;
   channelsChecked: number;
   videosAdded: number;
+  /** Channel playlists newly found and published. */
+  playlistsAdded: number;
+  /** Queued sources added by this run. */
+  draftsAdded: number;
   playlistsSynced: number;
   playlistVideosAdded: number;
   /** Due but left for the next run, because time or the quota ceiling ran out. */
@@ -303,7 +331,7 @@ export interface ScheduledCheckReport {
  * waits for the next run, so its cadence and its quota use stay bounded (§7.4).
  */
 export async function runScheduledSourceCheck(now = new Date()): Promise<ScheduledCheckReport> {
-  const report: ScheduledCheckReport = { skipped: null, channelsChecked: 0, videosAdded: 0, playlistsSynced: 0, playlistVideosAdded: 0, channelsLeft: 0, stoppedBy: null };
+  const report: ScheduledCheckReport = { skipped: null, channelsChecked: 0, videosAdded: 0, playlistsAdded: 0, draftsAdded: 0, playlistsSynced: 0, playlistVideosAdded: 0, channelsLeft: 0, stoppedBy: null };
   const settings = await getYouTubeSettings();
   if (!settings.autoCheckEnabled) report.skipped = "DISABLED";
   else if (!isYouTubeApiConfigured()) report.skipped = "NOT_CONFIGURED";
@@ -311,11 +339,14 @@ export async function runScheduledSourceCheck(now = new Date()): Promise<Schedul
   if (!report.skipped) {
     const deadline = new Date(now.getTime() + SCHEDULED_RUN_MS);
     const dueBefore = new Date(now.getTime() - CHECK_INTERVAL_MINUTES * MS_PER_MINUTE);
+    const dailyBefore = new Date(now.getTime() - PLAYLIST_RESCAN_HOURS * 60 * MS_PER_MINUTE);
+    // Never set can be null or missing, and those differ in filters.
+    const playlistsDue = [{ isPlaylistsComplete: false }, { isPlaylistsComplete: null }, { isPlaylistsComplete: { isSet: false } }, { playlistsCheckedAt: { lt: dailyBefore } }] satisfies Prisma.YouTubeChannelWhereInput[];
     const due = await prisma.youTubeChannel.findMany({
       where: {
         isFollowed: true,
-        // Not checked lately, or still on its first fetch. Never set can be null or missing.
-        OR: [{ lastCheckedAt: { lt: dueBefore } }, { lastCheckedAt: null }, { lastCheckedAt: { isSet: false } }, { isBackfillComplete: false }, { isBackfillComplete: null }, { isBackfillComplete: { isSet: false } }],
+        // Not checked lately, still on its first fetch, or its playlists are due.
+        OR: [{ lastCheckedAt: { lt: dueBefore } }, { lastCheckedAt: null }, { lastCheckedAt: { isSet: false } }, { isBackfillComplete: false }, { isBackfillComplete: null }, { isBackfillComplete: { isSet: false } }, ...playlistsDue],
       },
       orderBy: { lastCheckedAt: "asc" },
       take: 200,
@@ -323,6 +354,9 @@ export async function runScheduledSourceCheck(now = new Date()): Promise<Schedul
     });
 
     const isOutOfTime = () => Date.now() >= deadline.getTime();
+
+    // Queued sources first: adding one only follows it, about 1 unit, and its videos come next.
+    report.draftsAdded = (await runAutoDrafts(deadline)).added;
     const isFatal = (reason: CheckStopReason | null) => reason === "QUOTA_CEILING" || reason === "QUOTA_EXCEEDED" || reason === "NOT_CONFIGURED";
 
     for (const [index, { id }] of due.entries()) {
@@ -334,12 +368,34 @@ export async function runScheduledSourceCheck(now = new Date()): Promise<Schedul
       if (result.stoppedBy === "BUSY") continue;
       report.channelsChecked += 1;
       report.videosAdded += result.added;
+      report.playlistsAdded += result.playlistsAdded;
       if (result.stoppedBy && result.stoppedBy !== "NO_UPLOADS") report.stoppedBy = result.stoppedBy;
     }
 
+    // Channels added with the old importer and never followed keep their playlists too (plan D10).
     if (!isOutOfTime() && !isFatal(report.stoppedBy)) {
+      const imported = await prisma.importJob.findMany({ distinct: ["channelId"], select: { channelId: true }, take: 500 });
+      const saved = imported.length
+        ? await prisma.youTubeChannel.findMany({
+            where: { id: { in: imported.map((job) => job.channelId) }, title: { not: "" }, AND: [{ OR: [{ isFollowed: false }, { isFollowed: null }, { isFollowed: { isSet: false } }] }, { OR: playlistsDue }] },
+            take: 50,
+            select: { id: true },
+          })
+        : [];
+      for (const { id } of saved) {
+        if (isOutOfTime() || isFatal(report.stoppedBy)) break;
+        const result = await checkChannelPlaylists(id, { deadline, enforceQuotaCeiling: true });
+        report.playlistsAdded += result.added;
+        if (result.stoppedBy && result.stoppedBy !== "BUSY") report.stoppedBy = result.stoppedBy;
+      }
+    }
+
+    if (!isOutOfTime() && !isFatal(report.stoppedBy)) {
+      const neverSynced = [{ metadataFetchedAt: null }, { metadataFetchedAt: { isSet: false } }] satisfies Prisma.PlaylistWhereInput[];
+      // Playlists found on a channel are kept current by that channel's daily list read, 50 at a
+      // time, so only those added on their own are checked here.
       const playlists = await prisma.playlist.findMany({
-        where: { type: "YOUTUBE", isArchived: false, OR: [{ metadataFetchedAt: { lt: dueBefore } }, { metadataFetchedAt: null }, { metadataFetchedAt: { isSet: false } }] },
+        where: { type: "YOUTUBE", isArchived: false, AND: [{ OR: [{ sourceChannelId: null }, { sourceChannelId: { isSet: false } }] }, { OR: [{ metadataFetchedAt: { lt: dueBefore } }, ...neverSynced] }] },
         orderBy: { metadataFetchedAt: "asc" },
         take: 50,
         select: { id: true },
@@ -351,7 +407,8 @@ export async function runScheduledSourceCheck(now = new Date()): Promise<Schedul
           break;
         }
         try {
-          const sync = await syncYouTubePlaylist(id, undefined);
+          // 1 unit when nothing changed, rather than reading every page again.
+          const sync = await syncYouTubePlaylist(id, undefined, new Date(), { skipIfUnchanged: true });
           report.playlistsSynced += 1;
           report.playlistVideosAdded += sync.importedVideos;
         } catch (error) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, BookOpen, Clapperboard, Layers, ExternalLink, LayoutDashboard, LayoutGrid, Library, ListVideo, ScrollText, Settings, Tv, Users } from "lucide-react";
+import { Activity, BookOpen, Clapperboard, Inbox, Layers, ExternalLink, LayoutDashboard, LayoutGrid, Library, ListVideo, ScrollText, Settings, Tv, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { strings } from "@/config/strings.ar";
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 const ITEMS = {
   overview: { href: "/admin", label: strings.admin.overview, icon: LayoutDashboard },
   sources: { href: "/admin/sources", label: strings.sources.title, icon: Tv },
+  sourceDrafts: { href: "/admin/sources/drafts", label: strings.sourceDrafts.navLabel, icon: Inbox },
   shorts: { href: "/admin/shorts", label: strings.admin.shorts, icon: Clapperboard },
   articles: { href: "/admin/articles", label: strings.admin.articles, icon: BookOpen },
   topics: { href: "/admin/topics", label: strings.admin.topics, icon: LayoutGrid },
@@ -32,7 +33,8 @@ export function AdminNav({ sections }: { sections: AdminNavKey[] }) {
     <nav aria-label={strings.admin.navigationLabel} className="flex gap-1 overflow-x-auto border-b bg-surface p-2 md:w-56 md:shrink-0 md:flex-col md:border-e md:border-b-0">
       {sections.map((key) => {
         const { href, label, icon: Icon } = ITEMS[key];
-        const isCurrent = href === "/admin" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+        // The queue lives under Sources, so Sources is current only when the queue isn't.
+        const isCurrent = href === "/admin" ? pathname === href : (pathname === href || pathname.startsWith(`${href}/`)) && !(key === "sources" && pathname.startsWith("/admin/sources/drafts"));
         return (
           <Link
             key={key}

@@ -1,7 +1,9 @@
 import type { Prisma } from "@prisma/client";
+import { resolveSlug } from "@/features/content/common";
 import { prisma } from "@/lib/prisma";
 import { withTransaction } from "@/lib/prisma/transaction";
 import { buildSearchText, normalizeArabicForSearch } from "@/lib/search/normalize";
+import { slugify } from "@/lib/slug";
 import { YouTubeApiError } from "@/lib/youtube/client";
 import { fetchPlaylistMetadata, fetchPlaylistVideoIds, type NormalizedPlaylist } from "@/lib/youtube/playlists";
 import { importVideosByInput } from "./video-import.service";
@@ -35,11 +37,47 @@ const clearedPlaylistFields = {
   searchText: "",
 } satisfies Prisma.PlaylistUncheckedUpdateManyInput;
 
+/** Stores a YouTube playlist as a draft, ready to sync. The unique source key stops a second copy. */
+export async function createYouTubePlaylist(metadata: NormalizedPlaylist, options: { sourceChannelId?: string; now?: Date } = {}): Promise<string> {
+  const now = options.now ?? new Date();
+  return withTransaction(async (tx) => {
+    const isTaken = async (candidate: string) => (await tx.playlist.count({ where: { slug: candidate } })) > 0;
+    const slug = await resolveSlug(slugify(metadata.title) ? metadata.title : metadata.youtubePlaylistId.toLowerCase(), null, isTaken);
+    const created = await tx.playlist.create({
+      data: {
+        ...playlistYouTubeFields(metadata, now),
+        type: "YOUTUBE",
+        youtubePlaylistId: metadata.youtubePlaylistId,
+        sourceKey: `yt:${metadata.youtubePlaylistId}`,
+        slug,
+        status: "DRAFT",
+        syncStatus: "PENDING",
+        ...(options.sourceChannelId ? { sourceChannelId: options.sourceChannelId } : {}),
+      },
+      select: { id: true },
+    });
+    return created.id;
+  });
+}
+
+/**
+ * Publishes a synced playlist from a followed source (plan D10), once it has something to play.
+ * One someone unpublished or archived is left alone, so hiding it sticks.
+ */
+export async function publishPlaylistIfReady(playlistId: string, now = new Date()): Promise<boolean> {
+  const playlist = await prisma.playlist.findUnique({ where: { id: playlistId }, select: { status: true, isArchived: true, title: true, itemCount: true, publishedAt: true } });
+  if (!playlist || playlist.status !== "DRAFT" || playlist.isArchived || !playlist.title || playlist.itemCount === 0 || playlist.publishedAt) return false;
+  await prisma.playlist.update({ where: { id: playlistId }, data: { status: "PUBLISHED", publishedAt: now } });
+  return true;
+}
+
 export interface PlaylistSyncReport {
   outcome: "SYNCED" | "REMOVED_FROM_YOUTUBE";
   itemCount: number;
   importedVideos: number;
   isTruncated: boolean;
+  /** True when YouTube's count was unchanged, so only the details were refreshed. */
+  wasUnchanged?: boolean;
 }
 
 /**
@@ -48,8 +86,8 @@ export interface PlaylistSyncReport {
  * state, so a hidden video stays hidden. Re-running creates no duplicates, and an API failure
  * leaves the stored list as it was.
  */
-export async function syncYouTubePlaylist(playlistId: string, createdById: string | undefined, now = new Date()): Promise<PlaylistSyncReport> {
-  const playlist = await prisma.playlist.findUniqueOrThrow({ where: { id: playlistId }, select: { youtubePlaylistId: true } });
+export async function syncYouTubePlaylist(playlistId: string, createdById: string | undefined, now = new Date(), options: { skipIfUnchanged?: boolean } = {}): Promise<PlaylistSyncReport> {
+  const playlist = await prisma.playlist.findUniqueOrThrow({ where: { id: playlistId }, select: { youtubePlaylistId: true, youtubeItemCount: true, itemCount: true, syncStatus: true } });
   if (!playlist.youtubePlaylistId) throw new Error("Only YouTube playlists can be synced");
   const youtubePlaylistId = playlist.youtubePlaylistId;
 
@@ -61,6 +99,15 @@ export async function syncYouTubePlaylist(playlistId: string, createdById: strin
         await tx.playlist.update({ where: { id: playlistId }, data: { ...clearedPlaylistFields, metadataFetchedAt: now } });
       });
       return { outcome: "REMOVED_FROM_YOUTUBE", itemCount: 0, importedVideos: 0, isTruncated: false };
+    }
+
+    // The details request already carries YouTube's count. When it hasn't moved, the items almost
+    // certainly haven't either, so the 1 to 10 item pages are skipped. A full sync still runs within
+    // the 30-day refresh, which catches a swap that left the count the same.
+    if (options.skipIfUnchanged && playlist.syncStatus === "SYNCED" && metadata.itemCount !== null && metadata.itemCount === playlist.youtubeItemCount) {
+      // The 30-day clock is left alone, so the refresh job still does a full sync in time.
+      await prisma.playlist.update({ where: { id: playlistId }, data: { ...playlistYouTubeFields(metadata, now), metadataFetchedAt: undefined } });
+      return { outcome: "SYNCED", itemCount: playlist.itemCount, importedVideos: 0, isTruncated: false, wasUnchanged: true };
     }
 
     const { videoIds, isTruncated } = await fetchPlaylistVideoIds(youtubePlaylistId, MAX_YOUTUBE_PLAYLIST_ITEMS);
@@ -77,7 +124,7 @@ export async function syncYouTubePlaylist(playlistId: string, createdById: strin
       // Replaced as a whole, because YouTube decides the order. Viewing progress is keyed by video, so it survives.
       await tx.playlistItem.deleteMany({ where: { playlistId } });
       if (ordered.length) await tx.playlistItem.createMany({ data: ordered.map((videoId, position) => ({ playlistId, videoId, position })) });
-      await tx.playlist.update({ where: { id: playlistId }, data: { ...playlistYouTubeFields(metadata, now), syncStatus: "SYNCED", itemCount: ordered.length } });
+      await tx.playlist.update({ where: { id: playlistId }, data: { ...playlistYouTubeFields(metadata, now), syncStatus: "SYNCED", itemCount: ordered.length, youtubeItemCount: metadata.itemCount } });
     });
 
     return { outcome: "SYNCED", itemCount: ordered.length, importedVideos: importReport.imported.length, isTruncated };

@@ -8,7 +8,8 @@ import { formatCount, formatDuration, formatTimeAgo } from "@/lib/format/video-t
 import { cn } from "@/lib/utils";
 import { VideoCardMenu } from "./video-card-menu";
 
-export const videoGridClass = "grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2 sm:gap-y-8 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5";
+// At most four across, so thumbnails stay large enough to judge on a wide screen.
+export const videoGridClass = "grid grid-cols-1 gap-x-4 gap-y-7 sm:grid-cols-2 sm:gap-y-9 lg:grid-cols-3 xl:grid-cols-4";
 export const shortsGridClass = "grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8";
 
 function ChannelAvatar({ video }: { video: VideoCard }) {
@@ -50,14 +51,15 @@ export function ExploreVideoCard({ video, now, isInShelf = false }: { video: Vid
 
   return (
     <article className="group min-w-0" data-testid="video-tile">
-      <Link href={href} tabIndex={-1} aria-hidden className={cn("relative block overflow-hidden bg-surface-elevated sm:mx-0 sm:rounded-xl", isInShelf ? "rounded-xl" : "-mx-4")}>
+      {/* Inset from the screen edge with rounded corners on phones too, as YouTube does. */}
+      <Link href={href} tabIndex={-1} aria-hidden className={cn("relative block overflow-hidden rounded-2xl bg-surface-elevated shadow-sm ring-1 ring-white/5", isInShelf && "rounded-xl")}>
         {video.thumbnailUrl ? (
           <img src={video.thumbnailUrl} alt="" loading="lazy" decoding="async" referrerPolicy="strict-origin-when-cross-origin" className="aspect-video w-full object-cover transition-transform duration-300 group-hover:scale-[1.03] motion-reduce:transform-none" />
         ) : (
           <div className="aspect-video w-full" />
         )}
         {duration ? (
-          <span dir="ltr" className="absolute end-2 bottom-2 rounded-md bg-black/80 px-1.5 py-0.5 text-xs font-medium text-white" data-testid="video-duration">
+          <span dir="ltr" className="absolute end-2 bottom-2 rounded-md bg-black/75 px-1.5 py-0.5 text-xs font-semibold text-white backdrop-blur-sm" data-testid="video-duration">
             {duration}
           </span>
         ) : null}

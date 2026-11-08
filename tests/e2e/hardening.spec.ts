@@ -211,12 +211,12 @@ test.describe("privacy and terms", () => {
     await expect(page.getByTestId("site-footer")).toHaveCount(0);
   });
 
-  test("the account menu links to them too", async ({ page }) => {
-    await page.goto("/explore");
+  test("the account page links to them too", async ({ page }) => {
+    await page.goto("/account");
     await settled(page);
-    await page.getByTestId("account-menu").locator("visible=true").click();
-    await expect(page.getByRole("menuitem", { name: "سياسة الخصوصية" })).toHaveAttribute("href", "/privacy");
-    await expect(page.getByRole("menuitem", { name: "شروط الاستخدام" })).toHaveAttribute("href", "/terms");
+    const hub = page.getByTestId("account-page");
+    await expect(hub.getByRole("link", { name: "سياسة الخصوصية" })).toHaveAttribute("href", "/privacy");
+    await expect(hub.getByRole("link", { name: "شروط الاستخدام" })).toHaveAttribute("href", "/terms");
   });
 });
 

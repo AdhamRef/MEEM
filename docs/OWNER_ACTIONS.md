@@ -35,7 +35,11 @@ Please also try the real feed on each phone, with a few videos published, and te
 - [x] YouTube API key added to `.env`. It works: importing, refreshing, comments, and playlists all ran against the real API.
 - [ ] Send me **a few real Short URLs** from channels you intend to use. Only real vertical Shorts can finish the vertical-video test.
 - [ ] **Try Content sources on a real channel**, at `/admin/sources` (plan D10). Paste a channel link and keep the page open while it fills. Tell me how long it took, and anything that looked wrong. This is now the whole way to fill the feed: nothing needs publishing by hand.
-- [ ] **Follow your existing channels.** Channels imported the old way are listed under **قنوات محفوظة غير متابَعة** on that page. Press **تابِع** on each one you want checked hourly. Following one also publishes any of its uploads not yet on the site. Videos left as drafts by the old importer show as hidden on the channel's page, where you can select them all and press **نشر**.
+- [ ] **Follow your existing channels.** Channels imported the old way are listed under **قنوات محفوظة غير متابَعة** on that page. Press **تابِع** on each one you want checked hourly. Following one also publishes any of its uploads not yet on the site. Videos left as drafts by the old importer show as hidden on the channel's page, where you can select them all and press **نشر**. Their playlists arrive either way: the hourly job adds the playlists of every channel imported the old way, followed or not. That needs the hourly check below turned on, and `npm run db:sync` run once for the new fields.
+
+### Give the right people the queue
+
+- [ ] The queue at `/admin/sources/drafts` is for people who know good channels. It needs the same rights as adding a source: the Admin role, or an editor with both the import and publish permissions granted. Anyone with them can also add sources directly and hide videos, so give them only to people you trust with the site's content.
 
 ### Turn on the hourly check
 

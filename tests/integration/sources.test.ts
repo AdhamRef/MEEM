@@ -45,6 +45,8 @@ interface MockChannel {
   longIds?: string[];
   quotaAfterPages?: number;
   videoCount?: number;
+  /** The channel's own playlists, in the order YouTube lists them. */
+  playlists?: { id: string; videoIds: string[]; itemCount?: number }[];
 }
 
 const state: { channel: MockChannel } = { channel: { videoIds: [] } };
@@ -67,6 +69,23 @@ function mockYouTube(channel: MockChannel) {
           },
         ],
       });
+    }
+    if (url.pathname.endsWith("/playlists")) {
+      const all = current.playlists ?? [];
+      const resource = (playlist: { id: string; videoIds: string[]; itemCount?: number }) => ({
+        id: playlist.id,
+        snippet: { title: `قائمة ${playlist.id}`, channelId: CHANNEL_ID, channelTitle: "قناة تجريبية", thumbnails: { high: { url: `https://i.ytimg.com/vi/${playlist.videoIds[0] ?? "x"}/hqdefault.jpg` } } },
+        contentDetails: { itemCount: playlist.itemCount ?? playlist.videoIds.length },
+      });
+      const id = url.searchParams.get("id");
+      if (id) return json({ items: all.filter((playlist) => playlist.id === id).map(resource) });
+      const start = Number(url.searchParams.get("pageToken") ?? 0);
+      const next = start + 50 < all.length ? String(start + 50) : undefined;
+      return json({ ...(next ? { nextPageToken: next } : {}), items: all.slice(start, start + 50).map(resource) });
+    }
+    if (url.pathname.endsWith("/playlistItems") && url.searchParams.get("playlistId") !== UPLOADS) {
+      const playlist = current.playlists?.find((item) => item.id === url.searchParams.get("playlistId"));
+      return json({ items: (playlist?.videoIds ?? []).map((id) => ({ contentDetails: { videoId: id }, status: { privacyStatus: "public" } })) });
     }
     if (url.pathname.endsWith("/playlistItems")) {
       pages += 1;
@@ -412,5 +431,149 @@ describe("the channel data's 30-day limit", () => {
     fetchMock.mockImplementation(async () => apiError(403, "quotaExceeded"));
     expect((await runMetadataRefresh()).channelsWithdrawn).toBe(1);
     expect(await prisma.youTubeChannel.findFirstOrThrow()).toMatchObject({ title: "", description: null, handle: null, uploadsPlaylistId: null, youtubeVideoCount: null });
+  });
+});
+
+describe("a channel's playlists", () => {
+  const PL1 = "PLaaaaaaaaaaaaaaaaaaaaaa";
+  const PL2 = "PLbbbbbbbbbbbbbbbbbbbbbb";
+  const PL3 = "PLcccccccccccccccccccccc";
+  const channelListRequests = () => requestsTo("playlists").filter((url) => url.searchParams.has("channelId"));
+
+  it("adds them after the uploads, published in YouTube's order, skipping empty ones, with no duplicates", async () => {
+    const videos = ids(5);
+    const channelId = await followAndFetch({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[3]!, videos[1]!] }, { id: PL2, videoIds: [], itemCount: 0 }] });
+
+    const playlists = await prisma.playlist.findMany({ include: { items: { orderBy: { position: "asc" }, include: { video: { select: { youtubeVideoId: true } } } } } });
+    expect(playlists).toHaveLength(1);
+    expect(playlists[0]).toMatchObject({ youtubePlaylistId: PL1, type: "YOUTUBE", status: "PUBLISHED", sourceChannelId: channelId, itemCount: 2 });
+    expect(playlists[0]!.items.map((item) => item.video.youtubeVideoId)).toEqual([videos[3], videos[1]]);
+    expect(await prisma.youTubeChannel.findUniqueOrThrow({ where: { id: channelId } })).toMatchObject({ isPlaylistsComplete: true, playlistsPageToken: null });
+    // Its videos were already stored by the uploads walk, so the playlist cost no extra metadata.
+    expect(await prisma.video.count()).toBe(5);
+
+    await prisma.youTubeChannel.update({ where: { id: channelId }, data: { playlistsCheckedAt: new Date(Date.now() - 2 * DAY) } });
+    await checkChannel(channelId, { deadline: soon(), enforceQuotaCeiling: false });
+    expect(await prisma.playlist.count()).toBe(1);
+  });
+
+  it("reads the channel's list again daily, not hourly, and adds what's new", async () => {
+    const videos = ids(3);
+    const channelId = await followAndFetch({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[0]!] }] });
+
+    await prisma.youTubeChannel.update({ where: { id: channelId }, data: { lastCheckedAt: new Date(Date.now() - 2 * HOUR) } });
+    mockYouTube({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[0]!] }, { id: PL3, videoIds: [videos[2]!] }] });
+    await runScheduledSourceCheck();
+    expect(channelListRequests()).toHaveLength(0);
+    expect(await prisma.playlist.count()).toBe(1);
+
+    await prisma.youTubeChannel.update({ where: { id: channelId }, data: { lastCheckedAt: new Date(Date.now() - 2 * HOUR), playlistsCheckedAt: new Date(Date.now() - 25 * HOUR) } });
+    const report = await runScheduledSourceCheck();
+    expect(channelListRequests()).toHaveLength(1);
+    expect(report.playlistsAdded).toBe(1);
+    expect(await prisma.playlist.findFirstOrThrow({ where: { youtubePlaylistId: PL3 } })).toMatchObject({ status: "PUBLISHED", sourceChannelId: channelId });
+  });
+
+  it("checks a playlist added on its own hourly for 1 unit, reading its items only when its count changed", async () => {
+    const videos = ids(3);
+    await followAndFetch({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[0]!] }] });
+    mockYouTube({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[0]!] }, { id: PL3, videoIds: [videos[1]!] }] });
+    await addSource(admin, { input: `https://www.youtube.com/playlist?list=${PL3}` });
+
+    const makeDue = async () => {
+      await prisma.playlist.updateMany({ data: { metadataFetchedAt: new Date(Date.now() - 2 * HOUR) } });
+      await prisma.youTubeChannel.updateMany({ data: { lastCheckedAt: new Date() } });
+      fetchMock.mockClear();
+    };
+
+    // Unchanged: one details request, no item pages. The channel's playlist isn't checked hourly.
+    await makeDue();
+    expect((await runScheduledSourceCheck()).playlistsSynced).toBe(1);
+    expect(requestsTo("playlists").map((url) => url.searchParams.get("id"))).toEqual([PL3]);
+    expect(requestsTo("playlistItems")).toHaveLength(0);
+
+    // A new item changes the count, so the pages are read and the item is added.
+    mockYouTube({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[0]!] }, { id: PL3, videoIds: [videos[1]!, videos[2]!] }] });
+    await makeDue();
+    await runScheduledSourceCheck();
+    expect(requestsTo("playlistItems").map((url) => url.searchParams.get("playlistId"))).toEqual([PL3]);
+    expect((await prisma.playlist.findFirstOrThrow({ where: { youtubePlaylistId: PL3 } })).itemCount).toBe(2);
+  });
+
+  it("re-syncs a channel playlist from the daily list read only when its count changed", async () => {
+    const videos = ids(3);
+    const channelId = await followAndFetch({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[0]!] }] });
+    const daily = async () => {
+      await prisma.youTubeChannel.update({ where: { id: channelId }, data: { playlistsCheckedAt: new Date(Date.now() - 25 * HOUR) } });
+      fetchMock.mockClear();
+      await checkChannel(channelId, { deadline: soon(), enforceQuotaCeiling: false });
+    };
+
+    mockYouTube({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[0]!] }] });
+    await daily();
+    expect(requestsTo("playlistItems").filter((url) => url.searchParams.get("playlistId") === PL1)).toHaveLength(0);
+
+    mockYouTube({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[0]!, videos[2]!] }] });
+    await daily();
+    expect(requestsTo("playlistItems").filter((url) => url.searchParams.get("playlistId") === PL1)).toHaveLength(1);
+    expect((await prisma.playlist.findFirstOrThrow({ where: { youtubePlaylistId: PL1 } })).itemCount).toBe(2);
+  });
+
+  it("keeps the playlists of channels added with the old importer, without following them or walking their uploads", async () => {
+    const videos = ids(2);
+    mockYouTube({ videoIds: videos, playlists: [{ id: PL1, videoIds: videos }] });
+    const channel = await prisma.youTubeChannel.create({ data: { youtubeChannelId: CHANNEL_ID, title: "قناة قديمة", uploadsPlaylistId: UPLOADS, metadataFetchedAt: new Date() } });
+    await prisma.importJob.create({ data: { type: "IMPORT", status: "COMPLETED", channelId: channel.id } });
+
+    const report = await runScheduledSourceCheck();
+    expect(report.playlistsAdded).toBe(1);
+    expect(requestsTo("playlistItems").filter((url) => url.searchParams.get("playlistId") === UPLOADS)).toHaveLength(0);
+    expect(await prisma.playlist.findFirstOrThrow()).toMatchObject({ youtubePlaylistId: PL1, status: "PUBLISHED", sourceChannelId: channel.id, itemCount: 2 });
+    expect(await prisma.youTubeChannel.findUniqueOrThrow({ where: { id: channel.id } })).toMatchObject({ isFollowed: null, isPlaylistsComplete: true });
+
+    // Done for the day: the next hourly run doesn't read the list again.
+    fetchMock.mockClear();
+    await runScheduledSourceCheck();
+    expect(channelListRequests()).toHaveLength(0);
+  });
+
+  it("leaves a channel playlist someone unpublished as it is", async () => {
+    const videos = ids(2);
+    const channelId = await followAndFetch({ videoIds: videos, playlists: [{ id: PL1, videoIds: [videos[0]!] }] });
+    const playlist = await prisma.playlist.findFirstOrThrow();
+    await prisma.playlist.update({ where: { id: playlist.id }, data: { status: "DRAFT", metadataFetchedAt: new Date(Date.now() - 2 * DAY) } });
+    await prisma.youTubeChannel.update({ where: { id: channelId }, data: { lastCheckedAt: new Date() } });
+    await runScheduledSourceCheck();
+    expect((await prisma.playlist.findUniqueOrThrow({ where: { id: playlist.id } })).status).toBe("DRAFT");
+  });
+});
+
+describe("saving quota on channels already stored", () => {
+  it("skips walking a followed channel whose videos are all stored already, for 1 unit", async () => {
+    const videos = ids(120);
+    // As the old importer left it: every video stored, the channel saved but never followed.
+    await followAndFetch({ videoIds: videos });
+    const channel = await prisma.youTubeChannel.findFirstOrThrow();
+    await prisma.youTubeChannel.update({ where: { id: channel.id }, data: { isFollowed: false, isBackfillComplete: false, backfillPageToken: null, youtubeVideoCount: null } });
+
+    mockYouTube({ videoIds: videos });
+    await setChannelFollowed(admin, channel.id, true);
+    const result = await checkChannel(channel.id, { deadline: soon(), enforceQuotaCeiling: false });
+    expect(result).toMatchObject({ added: 0, isBackfillComplete: true });
+    expect(requestsTo("channels")).toHaveLength(1);
+    // Only the top page, to catch new uploads, rather than all three.
+    expect(requestsTo("playlistItems").filter((url) => url.searchParams.get("playlistId") === UPLOADS)).toHaveLength(1);
+  });
+
+  it("still walks a channel when some of its videos are missing", async () => {
+    const videos = ids(120);
+    await followAndFetch({ videoIds: videos.slice(0, 60) });
+    const channel = await prisma.youTubeChannel.findFirstOrThrow();
+    await prisma.youTubeChannel.update({ where: { id: channel.id }, data: { isBackfillComplete: false, backfillPageToken: null, youtubeVideoCount: 120 } });
+    mockYouTube({ videoIds: videos });
+    for (let step = 0; step < 10; step += 1) {
+      if ((await checkChannel(channel.id, { deadline: soon(), enforceQuotaCeiling: false })).isBackfillComplete) break;
+    }
+    expect(await prisma.video.count()).toBe(120);
   });
 });

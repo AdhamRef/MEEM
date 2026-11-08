@@ -56,6 +56,8 @@ One box takes any of these, worked out by `features/youtube/sources/detect.ts`, 
 | Quota | The hourly job stops once the day's usage reaches `autoCheckQuotaCeiling`, 8,000 by default. `quotaExceeded` is never retried. |
 | Switchable | `autoCheckEnabled` in the settings stops the hourly job without changing anything stored. |
 
+**A channel’s playlists** come next, once its uploads have all been read, so the videos in them are mostly stored already. `walkChannelPlaylists` reads the channel’s list with `playlists.list?channelId=`, 1 unit per 50, saving its place after each page. Each playlist not yet stored is created with `sourceChannelId`, synced, and published once it has items. Empty lists are skipped. The list is read again daily for new playlists, and playlists found this way are re-synced daily, while a playlist added on its own is re-synced hourly. Channels added with the old importer and never followed get their playlists too, without their uploads being walked. A playlist someone unpublished stays unpublished.
+
 **While a Sources or channel page is open**, the browser asks for one 20-second step after another for channels still on their first fetch, so a new channel fills in minutes. With the page closed, the hourly job continues from the same place.
 
 **The hourly job** is `/api/cron/sources-check`, protected by `CRON_SECRET` like the refresh. It checks followed channels not checked in the last 55 minutes, or still on their first fetch, oldest first, then syncs YouTube playlists not synced in that time. Each run leaves an audit record from `system:cron`, and the Sources page shows the last one. `.github/workflows/youtube-schedule.yml` calls it every hour, and calls the daily refresh once a day.

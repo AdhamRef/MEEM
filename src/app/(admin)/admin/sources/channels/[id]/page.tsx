@@ -1,4 +1,5 @@
-import { AlertTriangle, ArrowRight, ShieldX } from "lucide-react";
+/* eslint-disable @next/next/no-img-element -- Thumbnails load directly from YouTube by design, and aren't re-processed or re-hosted. */
+import { AlertTriangle, ArrowRight, ListVideo, ShieldX } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { bulkAssignVideosAction, bulkPublishVideosAction, listMatchingVideoIdsAction } from "@/app/(admin)/admin/shorts/actions";
@@ -14,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { strings } from "@/config/strings.ar";
 import { formatDuration } from "@/features/playlists/rules";
 import { listVideosForAdmin } from "@/features/shorts/videos-admin.service";
-import { getSourceChannel } from "@/features/youtube/sources/sources.service";
+import { getSourceChannel, listChannelPlaylists } from "@/features/youtube/sources/sources.service";
 import { checkPageAccess } from "@/lib/auth/guards";
 import { AppError } from "@/lib/errors";
 import { hasPermission } from "@/lib/permissions";
@@ -57,10 +58,11 @@ export default async function SourceChannelPage({ params, searchParams }: PagePr
   const kind = oneOf(query.kind, ["SHORT", "LONG_FORM"] as const);
   const search = query.query?.trim() || undefined;
   const filter = { channelId: channel.id, ...(status ? { status } : {}), ...(kind ? { kind } : {}), ...(search ? { query: search } : {}) };
-  const page = await listVideosForAdmin(actor, { ...filter, cursor: query.cursor });
+  const [page, playlists] = await Promise.all([listVideosForAdmin(actor, { ...filter, cursor: query.cursor }), listChannelPlaylists(actor, channel.id)]);
 
   const stored = channel.publishedCount + channel.hiddenCount;
   const isFetching = channel.isFollowed === true && channel.isBackfillComplete !== true;
+  const isFetchingPlaylists = channel.isFollowed === true && channel.isBackfillComplete === true && channel.isPlaylistsComplete !== true;
   const total = channel.youtubeVideoCount ?? 0;
   const base = `/admin/sources/channels/${channel.id}`;
   const hrefWith = (changes: Record<string, string | undefined>) => {
@@ -106,7 +108,43 @@ export default async function SourceChannelPage({ params, searchParams }: PagePr
         <ChannelSourceActions channelId={channel.id} youtubeChannelId={channel.youtubeChannelId} isFollowed={channel.isFollowed === true} canCheck={isYouTubeApiConfigured()} />
       </header>
 
-      {isFetching && isYouTubeApiConfigured() && !channel.lastCheckError ? <FetchRunner channelIds={[channel.id]} /> : null}
+      {(isFetching || isFetchingPlaylists) && isYouTubeApiConfigured() && !channel.lastCheckError ? <FetchRunner channelIds={[channel.id]} /> : null}
+
+      <section aria-labelledby="channel-playlists-title" className="space-y-3" data-testid="channel-playlists">
+        <div className="space-y-1">
+          <h2 id="channel-playlists-title" className="flex items-center gap-2 font-semibold">
+            {t.channelPlaylistsTitle}
+            <span className="rounded-full bg-surface-elevated px-2 text-xs tabular-nums">{playlists.length}</span>
+          </h2>
+          <p className="text-sm text-text-secondary">{isFetchingPlaylists ? t.fetchingPlaylists : t.channelPlaylistsHint}</p>
+        </div>
+        {playlists.length ? (
+          <ul className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-2 md:mx-0 md:px-0">
+            {playlists.map((playlist) => (
+              <li key={playlist.id} className="w-56 shrink-0 snap-start">
+                <Link href={`/admin/playlists/${playlist.id}`} className="group block space-y-2 rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50" data-testid="channel-playlist">
+                  <span className="relative block overflow-hidden rounded-xl bg-surface-elevated">
+                    {playlist.thumbnailUrl ? (
+                      <img src={playlist.thumbnailUrl} alt="" loading="lazy" decoding="async" referrerPolicy="strict-origin-when-cross-origin" className="aspect-video w-full object-cover transition-transform duration-300 group-hover:scale-[1.03] motion-reduce:transform-none" />
+                    ) : (
+                      <span className="flex aspect-video w-full items-center justify-center text-text-secondary">
+                        <ListVideo aria-hidden className="size-6" />
+                      </span>
+                    )}
+                    <span className="absolute end-1.5 bottom-1.5 rounded-md bg-black/80 px-1.5 py-0.5 text-[11px] font-medium text-white">{t.playlistItems(playlist.itemCount)}</span>
+                  </span>
+                  <span dir="auto" className="line-clamp-2 text-start text-sm leading-snug font-medium group-hover:text-brand">
+                    {playlist.title || strings.playlists.dataWithdrawn}
+                  </span>
+                  <span className="block text-xs text-text-secondary">{playlist.status === "PUBLISHED" ? t.playlistPublished : t.playlistDraft}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="rounded-xl border border-dashed p-4 text-center text-sm text-text-secondary">{t.channelPlaylistsEmpty}</p>
+        )}
+      </section>
 
       <section className="space-y-4">
         <div className="space-y-1">

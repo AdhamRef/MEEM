@@ -3,7 +3,12 @@ import type { Page } from "@playwright/test";
 import { createAccount, prisma, selectedTopicTitles, signInBrowser } from "./support/accounts";
 import { expect, test } from "./support/test";
 
-const accountMenu = (page: Page) => page.locator('[data-testid="account-menu"]:visible');
+// The account lives behind the "حسابي" tab now, in the bottom bar on phones and the rail otherwise.
+const accountTab = (page: Page) => page.locator("nav:visible").getByRole("link", { name: "حسابي" });
+const openAccount = async (page: Page) => {
+  await accountTab(page).click();
+  await expect(page).toHaveURL(/\/account$/);
+};
 const interest = (page: Page, title: string) => page.getByTestId("topic-tile").filter({ hasText: title });
 
 /** Chooses topics on the first visit, and takes the default channels. */
@@ -67,16 +72,17 @@ test.describe("guests", () => {
     await expect(interest(page, "الفقه")).toHaveAttribute("aria-pressed", "false");
   });
 
-  test("see sign-in and interests in the account menu, and nothing for accounts", async ({ page }) => {
+  test("see sign-in, the library, and interests on the account page, and nothing for accounts", async ({ page }) => {
     await page.goto("/interests");
-    await accountMenu(page).click();
-    await expect(page.getByRole("menuitem", { name: "تسجيل الدخول" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "موضوعاتي وقنواتي" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "تسجيل الخروج" })).toHaveCount(0);
-    await expect(page.getByRole("menuitem", { name: "لوحة التحكم" })).toHaveCount(0);
+    await openAccount(page);
+    const hub = page.getByTestId("account-page");
+    await expect(hub.getByRole("link", { name: "موضوعاتي وقنواتي" })).toBeVisible();
+    await expect(hub.getByRole("link", { name: "المحفوظات" }).or(hub.locator('a[href="/saved"]'))).toBeVisible();
+    await expect(page.getByTestId("account-sign-out")).toHaveCount(0);
+    await expect(hub.locator('a[href="/admin"]')).toHaveCount(0);
 
-    await page.getByRole("menuitem", { name: "تسجيل الدخول" }).click();
-    await expect(page).toHaveURL(/\/auth\/signin\?callbackUrl=%2Finterests$/);
+    await page.getByTestId("account-sign-in").click();
+    await expect(page).toHaveURL(/\/auth\/signin\?callbackUrl=%2Faccount$/);
   });
 });
 
@@ -201,12 +207,12 @@ test.describe("signed-in people", () => {
 
     await page.goto("/interests");
     await expect(page.getByText("تُحفظ اختياراتك في حسابك")).toBeVisible();
-    await accountMenu(page).click();
-    await expect(page.getByRole("menu")).toContainText("سارة");
-    await expect(page.getByRole("menu")).toContainText(account.email);
-    await expect(page.getByRole("menuitem", { name: "لوحة التحكم" })).toHaveCount(0);
+    await openAccount(page);
+    await expect(page.getByTestId("account-card")).toContainText("سارة");
+    await expect(page.getByTestId("account-card")).toContainText(account.email);
+    await expect(page.getByTestId("account-page").locator('a[href="/admin"]')).toHaveCount(0);
 
-    await page.getByRole("menuitem", { name: "تسجيل الخروج" }).click();
+    await page.getByTestId("account-sign-out").click();
     await expect(page).toHaveURL("/");
     await expect.poll(() => prisma.session.count({ where: { sessionToken: account.sessionToken } })).toBe(0);
   });
@@ -255,8 +261,8 @@ test.describe("dashboard access", () => {
     await signInBrowser(context, baseURL!, account.sessionToken);
     await page.goto("/interests");
     await expect(page.getByText("تُحفظ اختياراتك في حسابك")).toBeVisible();
-    await accountMenu(page).click();
-    await page.getByRole("menuitem", { name: "لوحة التحكم" }).click();
+    await openAccount(page);
+    await page.getByTestId("account-page").locator('a[href="/admin"]').click();
     await expect(page).toHaveURL("/admin");
   });
 
@@ -400,7 +406,7 @@ test.describe("layout and accessibility", () => {
   test("the account control fits a phone and meets the touch target", async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 740 });
     await page.goto("/topics");
-    const box = await accountMenu(page).boundingBox();
+    const box = await accountTab(page).boundingBox();
     expect(box!.width).toBeGreaterThanOrEqual(44);
     expect(box!.height).toBeGreaterThanOrEqual(44);
     await expect(page.getByTestId("top-bar")).toBeVisible();
@@ -410,7 +416,7 @@ test.describe("layout and accessibility", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
     await expect(page.getByTestId("top-bar")).toBeHidden();
-    await expect(accountMenu(page)).toBeVisible();
+    await expect(accountTab(page)).toBeVisible();
   });
 
   async function scan(page: Page) {
@@ -437,10 +443,9 @@ test.describe("layout and accessibility", () => {
     expect(await scan(page)).toEqual([]);
   });
 
-  test("the open account menu has no WCAG A or AA violations", async ({ page }) => {
+  test("the account page has no WCAG A or AA violations", async ({ page }) => {
     await page.goto("/interests");
-    await accountMenu(page).click();
-    await expect(page.getByRole("menu")).toBeVisible();
+    await openAccount(page);
     expect(await scan(page)).toEqual([]);
   });
 

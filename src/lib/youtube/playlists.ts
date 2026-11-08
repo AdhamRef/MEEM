@@ -18,7 +18,7 @@ const playlistResourceSchema = z.object({
   contentDetails: z.object({ itemCount: z.number().optional() }).optional(),
 });
 
-const playlistsResponseSchema = z.object({ items: z.array(playlistResourceSchema).default([]) });
+const playlistsResponseSchema = z.object({ nextPageToken: z.string().optional(), items: z.array(playlistResourceSchema).default([]) });
 
 const playlistItemsResponseSchema = z.object({
   nextPageToken: z.string().optional(),
@@ -43,7 +43,7 @@ export interface NormalizedPlaylist {
 }
 
 /** An ID missing from the result means the playlist is gone, or is private. */
-export async function fetchPlaylistMetadata(playlistId: string): Promise<NormalizedPlaylist | null> {
+export async function fetchPlaylistMetadata(playlistId: string): Promise<ChannelPlaylist | null> {
   const { items } = await youtubeRequest({
     endpoint: "playlists",
     params: { part: "snippet,contentDetails", id: playlistId, maxResults: "1" },
@@ -51,8 +51,10 @@ export async function fetchPlaylistMetadata(playlistId: string): Promise<Normali
     quotaUnits: 1,
   });
   const resource = items[0];
-  if (!resource) return null;
+  return resource ? { ...normalizePlaylist(resource), itemCount: resource.contentDetails?.itemCount ?? null } : null;
+}
 
+function normalizePlaylist(resource: z.infer<typeof playlistResourceSchema>): NormalizedPlaylist {
   return {
     youtubePlaylistId: resource.id,
     title: resource.snippet.title,
@@ -65,6 +67,25 @@ export async function fetchPlaylistMetadata(playlistId: string): Promise<Normali
       width: thumbnail.width ?? null,
       height: thumbnail.height ?? null,
     })),
+  };
+}
+
+export interface ChannelPlaylist extends NormalizedPlaylist {
+  /** As YouTube reports it, which counts private and deleted items too. */
+  itemCount: number | null;
+}
+
+/** One page of a channel's public playlists, 50 for 1 quota unit. Never the search endpoint. */
+export async function fetchChannelPlaylistsPage(channelYoutubeId: string, pageToken: string | null): Promise<{ playlists: ChannelPlaylist[]; nextPageToken: string | null }> {
+  const page = await youtubeRequest({
+    endpoint: "playlists",
+    params: { part: "snippet,contentDetails", channelId: channelYoutubeId, maxResults: String(PLAYLISTS_PER_REQUEST), ...(pageToken ? { pageToken } : {}) },
+    schema: playlistsResponseSchema,
+    quotaUnits: 1,
+  });
+  return {
+    playlists: page.items.map((resource) => ({ ...normalizePlaylist(resource), itemCount: resource.contentDetails?.itemCount ?? null })),
+    nextPageToken: page.nextPageToken ?? null,
   };
 }
 

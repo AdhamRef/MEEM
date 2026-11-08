@@ -30,6 +30,13 @@ function activeFrame(page: Page) {
 }
 
 const activeFrameVideo = (page: Page) => activeFrame(page).getAttribute("data-video-id");
+/** The feed's topics are in a drawer behind one button now, rather than a row of tabs. */
+async function chooseFeedTopic(page: Page, name: string) {
+  await page.getByTestId("interests-button").click();
+  await page.getByTestId("interests-drawer").getByRole("button", { name, exact: true }).click();
+  await expect(page.getByTestId("interests-drawer")).toHaveCount(0);
+}
+
 const calls = (page: Page) => page.evaluate(() => (window as unknown as { __ytCalls: { name: string; videoId: string; arg?: unknown }[] }).__ytCalls);
 const fire = (page: Page, method: string, value?: number) =>
   page.evaluate(
@@ -482,31 +489,31 @@ test.describe("the feed content", () => {
     expect(requests).toEqual([]);
   });
 
-  test("the tabs switch to one topic, and back", async ({ page }) => {
+  test("the interests drawer switches to one topic, and back", async ({ page }) => {
     await openFeed(page);
 
-    await page.getByTestId("feed-tabs").getByRole("button", { name: "النبوة", exact: true }).click();
-    await expect(page.getByTestId("feed-tabs").getByRole("button", { name: "النبوة", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await chooseFeedTopic(page, "النبوة");
+    await expect(page.getByTestId("interests-button")).toHaveAccessibleName(/النبوة/);
     await expect(page.getByTestId("feed-card").first()).toContainText("النبوة");
 
     const badges = await page.getByTestId("feed-card").locator("h2").allTextContents();
     expect(badges.length).toBeGreaterThan(0);
     expect(badges.every((title) => title.includes("النبوة"))).toBe(true);
 
-    await page.getByTestId("feed-tabs").getByRole("button", { name: "لك", exact: true }).click();
-    await expect(page.getByTestId("feed-tabs").getByRole("button", { name: "لك", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await chooseFeedTopic(page, "لك");
+    await expect(page.getByTestId("interests-button")).toHaveAccessibleName("اهتماماتك");
     await expect(activeFrame(page)).toHaveCount(1);
   });
 
-  test("the first tab stays reachable when there are more tabs than fit", async ({ page }) => {
+  test("every topic stays reachable in the drawer when there are many", async ({ page }) => {
     const channel = await prisma.youTubeChannel.findFirstOrThrow({ where: { title: seededChannelTitle("الفقه") } });
     const created = await Promise.all(Array.from({ length: 30 }, (_, index) => prisma.topic.create({ data: { title: `موضوع طويل الاسم للتجربة ${index} ${randomUUID().slice(0, 4)}`, slug: `many-tabs-${randomUUID()}`, status: "PUBLISHED", channels: { create: { channelId: channel.id } } } })));
     try {
       await openFeed(page);
-      const forYou = page.getByTestId("feed-tabs").getByRole("button", { name: "لك", exact: true });
-      await page.getByTestId("feed-tabs").getByRole("button", { name: created[29]!.title }).click();
-      await forYou.click();
-      await expect(forYou).toHaveAttribute("aria-pressed", "true");
+      await chooseFeedTopic(page, created[29]!.title);
+      await expect(page.getByTestId("interests-button")).toHaveAccessibleName(new RegExp(created[29]!.title));
+      await chooseFeedTopic(page, "لك");
+      await expect(page.getByTestId("interests-button")).toHaveAccessibleName("اهتماماتك");
     } finally {
       const ids = created.map((topic) => topic.id);
       await prisma.channelTopic.deleteMany({ where: { topicId: { in: ids } } });
@@ -521,7 +528,7 @@ test.describe("the feed content", () => {
     const video = await prisma.video.create({ data: { youtubeVideoId: `l${suffix.slice(0, 10)}`, kind: "LONG_FORM", classification: "LONG_FORM_CANDIDATE", status: "PUBLISHED", availability: "AVAILABLE", title: "محاضرة فقط", channelId: channel.id, feedKey: 1, metadataFetchedAt: new Date() } });
     try {
       await openFeed(page);
-      await page.getByTestId("feed-tabs").getByRole("button", { name: topic.title }).click();
+      await chooseFeedTopic(page, topic.title);
       await expect(page.getByText("لا توجد مقاطع منشورة في هذا الموضوع بعد.")).toBeVisible();
       // Nothing active, and no player left sitting over the message.
       await expect(activeFrame(page)).toHaveCount(0);
@@ -963,12 +970,12 @@ test.describe("sizing the video to the screen", () => {
     await expect(page.locator(`[data-testid="feed-card"][data-video-id="${video.id}"]`)).toHaveAttribute("data-shape", "vertical");
   });
 
-  test("gives the phone's top bar to the video on the feed only, and keeps the account menu", async ({ page }) => {
+  test("gives the phone's top bar to the video on the feed only, and keeps the interests button", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.addInitScript((value) => window.localStorage.setItem("preferences.v2", value), SKIPPED_FIRST_VISIT);
     await page.goto("/");
     await expect(page.getByTestId("top-bar")).toBeHidden();
-    await expect(page.getByTestId("feed-tabs").or(page.locator("[data-immersive-feed]")).getByTestId("account-menu").first()).toBeVisible();
+    await expect(page.getByTestId("interests-button")).toBeVisible();
     await page.goto("/explore");
     await expect(page.getByTestId("top-bar")).toBeVisible();
   });

@@ -46,7 +46,7 @@ export function FetchRunner({ channelIds }: { channelIds: string[] }) {
           return;
         }
         router.refresh();
-        const { stoppedBy, isBackfillComplete } = result.data;
+        const { stoppedBy, isBackfillComplete, arePlaylistsComplete } = result.data;
         if (stoppedBy === "BUSY") {
           await wait(BUSY_RETRY_MS);
           continue;
@@ -56,7 +56,8 @@ export function FetchRunner({ channelIds }: { channelIds: string[] }) {
           setError(result.data.message);
           return;
         }
-        if (isBackfillComplete || stoppedBy) finished.add(id);
+        // Its playlists come after its uploads, and are part of the first fetch too.
+        if ((isBackfillComplete && arePlaylistsComplete !== false) || stoppedBy) finished.add(id);
       }
     };
 

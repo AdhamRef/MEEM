@@ -43,3 +43,17 @@ export async function getQuotaUsage(now = new Date()): Promise<{ day: string; un
   const usage = await prisma.apiQuotaUsage.findUnique({ where: { day }, select: { units: true, exhausted: true } });
   return { day, units: usage?.units ?? 0, exhausted: usage?.exhausted ?? false };
 }
+
+/** YouTube's default daily allowance for a project, until an increase is granted. */
+export const YOUTUBE_DAILY_QUOTA = 10_000;
+
+/**
+ * When the quota next resets: midnight in Los Angeles. Read from the wall clock there, so it
+ * follows daylight saving, give or take the hour on the night the clocks change.
+ */
+export function nextQuotaReset(now = new Date()): Date {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" }).formatToParts(now);
+  const part = (type: string) => Number(parts.find((item) => item.type === type)?.value ?? 0);
+  const elapsed = (part("hour") * 3600 + part("minute") * 60 + part("second")) * 1000 + now.getMilliseconds();
+  return new Date(now.getTime() + 86_400_000 - elapsed);
+}

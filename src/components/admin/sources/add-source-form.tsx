@@ -7,20 +7,9 @@ import { addSourceAction } from "@/app/(admin)/admin/sources/actions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { strings } from "@/config/strings.ar";
-import type { AddSourceResult } from "@/features/youtube/sources/sources.service";
+import { describeAddResult } from "@/features/youtube/sources/describe";
 
 const t = strings.sources;
-
-function describe(result: AddSourceResult): string {
-  switch (result.kind) {
-    case "channel":
-      return result.wasFollowed ? t.alreadyFollowed(result.title) : t.addedChannel(result.title);
-    case "playlist":
-      return result.isPublished ? t.addedPlaylist(result.title, result.importedVideos) : t.addedPlaylistDraft(result.title);
-    case "videos":
-      return t.addedVideos(result.imported, result.duplicates, result.notFound);
-  }
-}
 
 /** One box for every kind of source. What a link is gets worked out on the server, never trusted from here. */
 export function AddSourceForm({ unavailableReason }: { unavailableReason: string | null }) {
@@ -40,7 +29,7 @@ export function AddSourceForm({ unavailableReason }: { unavailableReason: string
       return;
     }
     setInput("");
-    setMessage({ text: describe(result.data), isError: false });
+    setMessage({ text: describeAddResult(result.data), isError: false });
     router.refresh();
   };
 

@@ -33,7 +33,7 @@ export function ChannelSourceActions({ channelId, youtubeChannelId, isFollowed, 
     const result = await checkChannelNowAction(channelId);
     setIsBusy(false);
     if (!result.ok) setMessage({ text: result.message, isError: true });
-    else setMessage({ text: result.data.message ?? t.checkAdded(result.data.added), isError: Boolean(result.data.message) });
+    else setMessage({ text: result.data.message ?? t.checkAdded(result.data.added, result.data.playlistsAdded), isError: Boolean(result.data.message) });
     router.refresh();
   };
 

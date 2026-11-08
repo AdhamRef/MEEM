@@ -19,6 +19,7 @@ For the volunteers who run the platform. Open the dashboard at `/admin`. You'll 
 Everything comes in through **Content sources** (`/admin/sources`). Paste a link in the box and press **Add**. The kind of link is worked out for you:
 
 - **A channel**, by its address or its `@handle`: the site follows it. Its videos are fetched and published as they arrive, newest first. A bar shows how far it has got. Older addresses containing `/c/` don't work, so open the channel and copy its `@handle` instead.
+- **A channel’s playlists come with it.** Once its videos are in, its playlists are added and published too, each with its own page, and its list is checked daily for new ones. Channels added with the old importer get their playlists the same way, even if you haven’t followed them. A channel’s page lists them.
 - **A playlist**, by its address: its videos are added and published, and the playlist gets its own page on the site.
 - **One or more videos**: paste their links, one per line (Shift and Enter starts a new line). They're published at once. Their channel is saved but not followed.
 
@@ -27,6 +28,15 @@ Everything comes in through **Content sources** (`/admin/sources`). Paste a link
 **A first fetch goes fastest with the page open.** While the Sources page or the channel's page is open, the site keeps fetching without stopping. If you close it, the hourly check carries on from the same place. Nothing is lost either way.
 
 **If it says the daily quota has run out,** nothing is lost. Fetching continues by itself after midnight Pacific time. The hourly check also stops by itself once the day's usage reaches the ceiling in **Settings**, so some quota is always left for you.
+
+### The queue: sources for later
+
+**قائمة الانتظار** (`/admin/sources/drafts`) holds sources you want added later, usually because the day's YouTube quota has run out. Saving one costs no quota: the link is only checked for shape, and against what's already on the site.
+
+- Paste the link, and optionally a short name and a line on why it's worth adding, so others on the team can see your reasoning.
+- **Add automatically** (on by default) adds it in the first hourly check that has quota, as you, with your permissions at the time. If your role changes and you can no longer add sources, it stops and says so.
+- **Add now** adds it straight away, or **Add all waiting** does the visible ones in turn. Both stop at the first sign the quota has run out, and what's left stays waiting.
+- The meter shows the day's use out of YouTube's 10,000 units, the share the hourly check may use, and when it resets, at midnight Los Angeles time. "0" means nothing has been spent yet.
 
 ### Managing a channel
 

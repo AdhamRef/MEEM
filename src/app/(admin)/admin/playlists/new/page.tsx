@@ -26,7 +26,7 @@ export default async function NewPlaylistPage() {
         <section className="space-y-2">
           <h2 className="font-semibold">{strings.playlists.curatedTitle}</h2>
           <p className="text-sm text-text-secondary">{strings.playlists.curatedDescription}</p>
-          <CuratedPlaylistForm isPublished={false} canEdit onSave={createCuratedPlaylistAction} initial={{ title: "", slug: "", description: null, introduction: null, coverImage: null, isFeatured: false, displayOrder: 0 }} />
+          <CuratedPlaylistForm isPublished={false} canEdit onSave={createCuratedPlaylistAction} initial={{ title: "", slug: "", description: null, introduction: null, coverImage: null, isFeatured: false }} />
         </section>
       ) : null}
     </div>

@@ -69,7 +69,7 @@ export default async function EditPlaylistPage({ params }: { params: Promise<{ i
           isPublished={isPublished}
           canEdit={canEdit}
           onSave={updatePlaylistAction.bind(null, id)}
-          initial={{ title: playlist.title, slug: playlist.slug, description: playlist.description, introduction: playlist.introduction, coverImage: playlist.coverImage, isFeatured: playlist.isFeatured, displayOrder: playlist.displayOrder }}
+          initial={{ title: playlist.title, slug: playlist.slug, description: playlist.description, introduction: playlist.introduction, coverImage: playlist.coverImage, isFeatured: playlist.isFeatured }}
         />
       ) : (
         <YouTubePlaylistForm
@@ -88,7 +88,6 @@ export default async function EditPlaylistPage({ params }: { params: Promise<{ i
             youtubePlaylistId: playlist.youtubePlaylistId ?? "",
             introduction: playlist.introduction,
             isFeatured: playlist.isFeatured,
-            displayOrder: playlist.displayOrder,
           }}
         />
       )}

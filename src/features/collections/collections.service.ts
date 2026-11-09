@@ -22,7 +22,8 @@ export const COLLECTION_ITEM_TYPES = ["TOPIC", "ARTICLE", "VIDEO", "PLAYLIST", "
 export const collectionInputSchema = z.strictObject({
   title: z.string().trim().min(1).max(120),
   description: optionalText(500),
-  displayOrder: z.number().int().min(0).max(100_000).default(0),
+  // Set by dragging in the structure workspace. Leaving it out keeps the current place.
+  displayOrder: z.number().int().min(0).max(100_000).optional(),
 });
 
 function parseInput(rawInput: unknown) {

@@ -8,11 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { strings } from "@/config/strings.ar";
-import type { PickerItem } from "@/features/relationships/picker.service";
 import type { ActionResult } from "@/lib/http/action";
 import { isValidSlug } from "@/lib/slug";
 import { zodResolver } from "@/lib/validation/zod-resolver";
-import { ContentPicker } from "./content-picker";
 import { FormField } from "./form-field";
 import { ImageField } from "./image-field";
 
@@ -21,7 +19,6 @@ const c = strings.adminContent;
 const requiredText = (max: number) => z.string().trim().min(1, c.required).max(max, c.tooLong);
 const optionalInput = (max: number) => z.string().trim().max(max, c.tooLong);
 const slugInput = z.string().trim().refine((value) => value === "" || isValidSlug(value), c.invalidSlug);
-const orderInput = z.string().trim().regex(/^\d{0,6}$/, c.invalidNumber);
 
 const blankToNull = (value: string) => value.trim() || null;
 
@@ -89,7 +86,6 @@ const topicFormSchema = z.object({
   description: optionalInput(5000),
   coverImage: z.string().nullable(),
   isFeatured: z.boolean(),
-  displayOrder: orderInput,
 });
 type TopicFormValues = z.infer<typeof topicFormSchema>;
 
@@ -97,7 +93,7 @@ export interface TopicFormProps {
   id?: string;
   isPublished: boolean;
   canEdit: boolean;
-  initial: { title: string; slug: string; introduction: string | null; description: string | null; coverImage: string | null; isFeatured: boolean; displayOrder: number; parent: PickerItem | null };
+  initial: { title: string; slug: string; introduction: string | null; description: string | null; coverImage: string | null; isFeatured: boolean };
   onSave: (input: unknown) => Promise<ActionResult<SaveOutcome>>;
 }
 
@@ -111,10 +107,8 @@ export function TopicForm({ id, isPublished, canEdit, initial, onSave }: TopicFo
       description: initial.description ?? "",
       coverImage: initial.coverImage,
       isFeatured: initial.isFeatured,
-      displayOrder: String(initial.displayOrder),
     },
   });
-  const [parent, setParent] = useState<PickerItem[]>(initial.parent ? [initial.parent] : []);
   const submit = useFormSubmit("/admin/topics", id);
   const { errors, isSubmitting } = form.formState;
 
@@ -131,9 +125,7 @@ export function TopicForm({ id, isPublished, canEdit, initial, onSave }: TopicFo
             introduction: blankToNull(values.introduction),
             description: blankToNull(values.description),
             coverImage: values.coverImage,
-            parentId: parent[0]?.id ?? null,
             isFeatured: values.isFeatured,
-            displayOrder: Number(values.displayOrder || 0),
           }),
         );
       })}
@@ -143,12 +135,10 @@ export function TopicForm({ id, isPublished, canEdit, initial, onSave }: TopicFo
       <AreaField label={c.introduction} registration={form.register("introduction")} error={errors.introduction?.message} disabled={!canEdit} />
       <AreaField label={c.description} rows={6} registration={form.register("description")} error={errors.description?.message} disabled={!canEdit} />
       <Controller control={form.control} name="coverImage" render={({ field }) => <ImageField label={c.cover} value={field.value} onChange={field.onChange} disabled={!canEdit} />} />
-      <ContentPicker label={c.parentTopic} type="TOPIC" single value={parent} onChange={setParent} excludeId={id} disabled={!canEdit} />
       <label className="flex min-h-11 items-center gap-2 text-sm">
         <input type="checkbox" {...form.register("isFeatured")} disabled={!canEdit} className="size-4" />
         {c.featured}
       </label>
-      <TextField label={c.displayOrder} hint={c.displayOrderHint} registration={form.register("displayOrder")} error={errors.displayOrder?.message} disabled={!canEdit} />
       {canEdit ? <SubmitRow isSubmitting={isSubmitting} message={submit.message} isError={submit.isError} /> : <p className="text-sm text-text-secondary">{c.noPermission}</p>}
     </form>
   );
@@ -165,7 +155,6 @@ const libraryFormSchema = z.object({
   introduction: optionalInput(5000),
   coverImage: z.string().nullable(),
   isFeatured: z.boolean(),
-  displayOrder: orderInput,
 });
 type LibraryFormValues = z.infer<typeof libraryFormSchema>;
 
@@ -173,7 +162,7 @@ export interface LibraryFormProps {
   id?: string;
   isPublished: boolean;
   canEdit: boolean;
-  initial: { name: string; slug: string; description: string | null; introduction: string | null; coverImage: string | null; isFeatured: boolean; displayOrder: number; parent: PickerItem | null };
+  initial: { name: string; slug: string; description: string | null; introduction: string | null; coverImage: string | null; isFeatured: boolean };
   onSave: (input: unknown) => Promise<ActionResult<SaveOutcome>>;
 }
 
@@ -187,10 +176,8 @@ export function LibraryForm({ id, isPublished, canEdit, initial, onSave }: Libra
       introduction: initial.introduction ?? "",
       coverImage: initial.coverImage,
       isFeatured: initial.isFeatured,
-      displayOrder: String(initial.displayOrder),
     },
   });
-  const [parent, setParent] = useState<PickerItem[]>(initial.parent ? [initial.parent] : []);
   const submit = useFormSubmit("/admin/libraries", id);
   const { errors, isSubmitting } = form.formState;
 
@@ -207,9 +194,7 @@ export function LibraryForm({ id, isPublished, canEdit, initial, onSave }: Libra
             description: blankToNull(values.description),
             introduction: blankToNull(values.introduction),
             coverImage: values.coverImage,
-            parentId: parent[0]?.id ?? null,
             isFeatured: values.isFeatured,
-            displayOrder: Number(values.displayOrder || 0),
           }),
         );
       })}
@@ -219,12 +204,10 @@ export function LibraryForm({ id, isPublished, canEdit, initial, onSave }: Libra
       <AreaField label={c.description} registration={form.register("description")} error={errors.description?.message} disabled={!canEdit} />
       <AreaField label={c.introduction} rows={6} registration={form.register("introduction")} error={errors.introduction?.message} disabled={!canEdit} />
       <Controller control={form.control} name="coverImage" render={({ field }) => <ImageField label={c.cover} value={field.value} onChange={field.onChange} disabled={!canEdit} />} />
-      <ContentPicker label={c.parentLibrary} type="LIBRARY" single value={parent} onChange={setParent} excludeId={id} disabled={!canEdit} />
       <label className="flex min-h-11 items-center gap-2 text-sm">
         <input type="checkbox" {...form.register("isFeatured")} disabled={!canEdit} className="size-4" />
         {c.featured}
       </label>
-      <TextField label={c.displayOrder} hint={c.displayOrderHint} registration={form.register("displayOrder")} error={errors.displayOrder?.message} disabled={!canEdit} />
       {canEdit ? <SubmitRow isSubmitting={isSubmitting} message={submit.message} isError={submit.isError} /> : <p className="text-sm text-text-secondary">{c.noPermission}</p>}
     </form>
   );

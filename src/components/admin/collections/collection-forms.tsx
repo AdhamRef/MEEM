@@ -25,14 +25,13 @@ const s = strings.collections;
 const formSchema = z.object({
   title: z.string().trim().min(1, c.required).max(120, c.tooLong),
   description: z.string().trim().max(500, c.tooLong),
-  displayOrder: z.string().trim().regex(/^\d{0,6}$/, c.invalidNumber),
 });
 type FormValues = z.infer<typeof formSchema>;
 
 interface CollectionFormProps {
   id?: string;
   canEdit: boolean;
-  initial: { title: string; description: string | null; displayOrder: number };
+  initial: { title: string; description: string | null };
   onSave: (input: unknown) => Promise<ActionResult<{ id: string }>>;
 }
 
@@ -41,7 +40,7 @@ export function CollectionForm({ id, canEdit, initial, onSave }: CollectionFormP
   const [message, setMessage] = useState<{ text: string; isError: boolean } | null>(null);
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: { title: initial.title, description: initial.description ?? "", displayOrder: String(initial.displayOrder) },
+    defaultValues: { title: initial.title, description: initial.description ?? "" },
   });
   const { errors, isSubmitting } = form.formState;
 
@@ -51,7 +50,7 @@ export function CollectionForm({ id, canEdit, initial, onSave }: CollectionFormP
       className="space-y-4 rounded-xl border bg-surface p-4"
       data-testid="collection-form"
       onSubmit={form.handleSubmit(async (values) => {
-        const result = await onSave({ title: values.title, description: values.description.trim() || null, displayOrder: Number(values.displayOrder || 0) });
+        const result = await onSave({ title: values.title, description: values.description.trim() || null });
         if (!result.ok) {
           setMessage({ text: result.message, isError: true });
           return;
@@ -66,9 +65,6 @@ export function CollectionForm({ id, canEdit, initial, onSave }: CollectionFormP
       </FormField>
       <FormField label={c.description} error={errors.description?.message}>
         <Textarea {...form.register("description")} disabled={!canEdit} rows={2} dir="auto" />
-      </FormField>
-      <FormField label={c.displayOrder} error={errors.displayOrder?.message}>
-        <Input {...form.register("displayOrder")} disabled={!canEdit} inputMode="numeric" />
       </FormField>
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={isSubmitting || !canEdit} data-testid="form-save">

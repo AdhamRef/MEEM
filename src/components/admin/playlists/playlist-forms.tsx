@@ -19,7 +19,6 @@ const c = strings.adminContent;
 const p = strings.playlists;
 
 const slugInput = z.string().trim().refine((value) => value === "" || isValidSlug(value), c.invalidSlug);
-const orderInput = z.string().trim().regex(/^\d{0,6}$/, c.invalidNumber);
 
 const curatedSchema = z.object({
   title: z.string().trim().min(1, c.required).max(200, c.tooLong),
@@ -28,7 +27,6 @@ const curatedSchema = z.object({
   introduction: z.string().trim().max(5000, c.tooLong),
   coverImage: z.string().nullable(),
   isFeatured: z.boolean(),
-  displayOrder: orderInput,
 });
 type CuratedValues = z.infer<typeof curatedSchema>;
 
@@ -45,7 +43,7 @@ interface CuratedFormProps {
   id?: string;
   isPublished: boolean;
   canEdit: boolean;
-  initial: { title: string; slug: string; description: string | null; introduction: string | null; coverImage: string | null; isFeatured: boolean; displayOrder: number };
+  initial: { title: string; slug: string; description: string | null; introduction: string | null; coverImage: string | null; isFeatured: boolean };
   onSave: (input: unknown) => Promise<ActionResult<{ id: string }>>;
 }
 
@@ -54,7 +52,7 @@ export function CuratedPlaylistForm({ id, isPublished, canEdit, initial, onSave 
   const [feedback, setFeedback] = useState<{ text: string; isError: boolean } | null>(null);
   const form = useForm<CuratedValues>({
     resolver: zodResolver(curatedSchema),
-    defaultValues: { title: initial.title, slug: initial.slug, description: initial.description ?? "", introduction: initial.introduction ?? "", coverImage: initial.coverImage, isFeatured: initial.isFeatured, displayOrder: String(initial.displayOrder) },
+    defaultValues: { title: initial.title, slug: initial.slug, description: initial.description ?? "", introduction: initial.introduction ?? "", coverImage: initial.coverImage, isFeatured: initial.isFeatured },
   });
   const { errors, isSubmitting } = form.formState;
 
@@ -66,7 +64,6 @@ export function CuratedPlaylistForm({ id, isPublished, canEdit, initial, onSave 
       introduction: values.introduction || null,
       coverImage: values.coverImage,
       isFeatured: values.isFeatured,
-      displayOrder: Number(values.displayOrder || 0),
     });
     if (!result.ok) {
       setFeedback({ text: result.message, isError: true });
@@ -96,9 +93,6 @@ export function CuratedPlaylistForm({ id, isPublished, canEdit, initial, onSave 
         <input type="checkbox" {...form.register("isFeatured")} disabled={!canEdit} className="size-4" />
         {c.featured}
       </label>
-      <FormField label={c.displayOrder} hint={c.displayOrderHint} error={errors.displayOrder?.message}>
-        <Input {...form.register("displayOrder")} disabled={!canEdit} />
-      </FormField>
       {canEdit ? (
         <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={isSubmitting} data-testid="form-save">
@@ -113,7 +107,7 @@ export function CuratedPlaylistForm({ id, isPublished, canEdit, initial, onSave 
   );
 }
 
-const youtubeSchema = z.object({ slug: slugInput, introduction: z.string().trim().max(5000, c.tooLong), isFeatured: z.boolean(), displayOrder: orderInput });
+const youtubeSchema = z.object({ slug: slugInput, introduction: z.string().trim().max(5000, c.tooLong), isFeatured: z.boolean() });
 type YouTubeValues = z.infer<typeof youtubeSchema>;
 
 interface YouTubeFormProps {
@@ -122,7 +116,7 @@ interface YouTubeFormProps {
   canSync: boolean;
   syncStatus: "NOT_APPLICABLE" | "PENDING" | "SYNCED" | "FAILED";
   metadataFetchedAt: string | null;
-  initial: { title: string; slug: string; description: string | null; channelTitle: string | null; youtubePlaylistId: string; introduction: string | null; isFeatured: boolean; displayOrder: number };
+  initial: { title: string; slug: string; description: string | null; channelTitle: string | null; youtubePlaylistId: string; introduction: string | null; isFeatured: boolean };
   onSave: (input: unknown) => Promise<ActionResult<{ id: string }>>;
   onSync: () => Promise<ActionResult<{ outcome: string; itemCount: number; isTruncated: boolean }>>;
 }
@@ -135,7 +129,7 @@ export function YouTubePlaylistForm({ isPublished, canEdit, canSync, syncStatus,
   const [isSyncing, setIsSyncing] = useState(false);
   const form = useForm<YouTubeValues>({
     resolver: zodResolver(youtubeSchema),
-    defaultValues: { slug: initial.slug, introduction: initial.introduction ?? "", isFeatured: initial.isFeatured, displayOrder: String(initial.displayOrder) },
+    defaultValues: { slug: initial.slug, introduction: initial.introduction ?? "", isFeatured: initial.isFeatured },
   });
   const { errors, isSubmitting } = form.formState;
 
@@ -144,7 +138,6 @@ export function YouTubePlaylistForm({ isPublished, canEdit, canSync, syncStatus,
       ...(values.slug ? { slug: values.slug } : {}),
       introduction: values.introduction || null,
       isFeatured: values.isFeatured,
-      displayOrder: Number(values.displayOrder || 0),
     });
     setFeedback(result.ok ? { text: c.saved, isError: false } : { text: result.message, isError: true });
     if (result.ok) router.refresh();
@@ -218,9 +211,6 @@ export function YouTubePlaylistForm({ isPublished, canEdit, canSync, syncStatus,
           <input type="checkbox" {...form.register("isFeatured")} disabled={!canEdit} className="size-4" />
           {c.featured}
         </label>
-        <FormField label={c.displayOrder} hint={c.displayOrderHint} error={errors.displayOrder?.message}>
-          <Input {...form.register("displayOrder")} disabled={!canEdit} />
-        </FormField>
         {canEdit ? (
           <div className="flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={isSubmitting} data-testid="form-save">
